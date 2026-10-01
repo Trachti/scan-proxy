@@ -3,14 +3,14 @@ param(
     [ValidateSet('Resolve','Setup','Status')][string]$Mode='Resolve',
     [string]$FilePath,
     [string]$RelativePath,
-    [string]$UserName='scan-service',
+    [string]$UserName='scanner-service',
     [int]$LookbackMinutes=10,
     [string]$ReferenceTimeUtc,
     [int]$AmbiguitySeconds=8,
     [string]$IgnoredNetworks=''
 )
 
-$Version = '2.11.0-public'
+$Version = '2.11.0'
 # +------------+---------+-------------------------------------------------------------------------+
 # | Date       | Author  | Change                                                                  |
 # +------------+---------+-------------------------------------------------------------------------+

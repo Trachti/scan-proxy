@@ -28,14 +28,14 @@ except ImportError:
     PdfReader = None
 
 
-VERSION = "2.11.0-english-repository"
+VERSION = "2.11.0"
 
 if getattr(sys, "frozen", False):
     BASE = Path(sys.executable).resolve().parent
 else:
     BASE = Path(__file__).resolve().parent.parent
 
-ROOT = Path(os.environ.get("SCAN_PROXY_ROOT", r"E:\scan"))
+ROOT = Path(os.environ.get("SCAN_PROXY_ROOT", r"C:\ScanProxy\data"))
 CONFIG_PATH = Path(
     os.environ.get(
         "SCAN_PROXY_CONFIG",
@@ -746,8 +746,8 @@ class Analytics:
                 """
                 SELECT *
                 FROM pending_moves
-                WHERE state = 'pending'
-                ORDER BY created_at_utc
+                WHERE state IN ('pending', 'blocked')
+                ORDER BY last_attempt_utc, created_at_utc
                 LIMIT 10
                 """
             ).fetchall()
@@ -1511,30 +1511,65 @@ def transfer(
         committed_at = utc_now_iso()
 
         if action == "move":
+            source_exists = True
             try:
-                source_path.unlink()
-            except OSError as exc:
-                try:
-                    analytics.add_move(
-                        source_path,
-                        destination_path,
-                        relative,
-                        routing_label,
-                        before,
-                        modified_at,
-                        resolution,
-                        exc,
-                    )
-                except Exception:
+                latest = source_path.stat()
+            except FileNotFoundError:
+                source_exists = False
+            else:
+                if (before.st_size, before.st_mtime_ns) != (
+                    latest.st_size,
+                    latest.st_mtime_ns,
+                ):
                     try:
                         destination_path.unlink()
-                    except OSError:
-                        log.exception(
-                            "CRITICAL | Destination could not be rolled back "
-                            "after a failed move | Destination=%s",
+                    except OSError as exc:
+                        try:
+                            analytics.add_move(
+                                source_path,
+                                destination_path,
+                                relative,
+                                routing_label,
+                                before,
+                                modified_at,
+                                resolution,
+                                f"Source changed after destination commit: {exc}",
+                            )
+                        except Exception:
+                            log.exception(
+                                "CRITICAL | Changed source and destination "
+                                "could not be registered for retry | "
+                                "Source=%s | Destination=%s",
+                                source_path,
+                                destination_path,
+                            )
+                    return False
+
+            if source_exists:
+                try:
+                    source_path.unlink()
+                except OSError as exc:
+                    try:
+                        analytics.add_move(
+                            source_path,
                             destination_path,
+                            relative,
+                            routing_label,
+                            before,
+                            modified_at,
+                            resolution,
+                            exc,
                         )
-                return False
+                    except Exception:
+                        try:
+                            destination_path.unlink()
+                        except OSError:
+                            log.exception(
+                                "CRITICAL | Destination could not be rolled back "
+                                "after a failed move | Destination=%s",
+                                destination_path,
+                            )
+                    return False
 
         analytics.add_scan(
             source_path,
@@ -1705,6 +1740,12 @@ def single_instance(log):
 
 def main():
     log, analytics_log = get_logs()
+    if not CONFIG_PATH.is_file():
+        message = f"Configuration file not found: {CONFIG_PATH}"
+        log.error("ABORT | %s", message)
+        print(message, file=sys.stderr, flush=True)
+        return
+
     mutex = single_instance(log)
     if mutex is False:
         return

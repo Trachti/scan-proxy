@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Build output
+build/
+dist/
+*.spec
+
+# Local configuration
+config/scan-proxy-config.xlsx
+config/environment.local.ps1
+
+# Runtime data
+logs/
+analytics/
+*.db
+*.db-wal
+*.db-shm
+
+# Temporary files
+*.tmp
+*.part
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

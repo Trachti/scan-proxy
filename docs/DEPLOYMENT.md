@@ -2,6 +2,8 @@
 
 ## Source-based deployment
 
+For SMB client attribution, deploy the application on the Windows SMB server that hosts the monitored source share. The SMB cmdlets and Security event 5145 expose activity observed by the local server.
+
 1. Clone the repository to the Windows host.
 2. Run `scripts\install.ps1`.
 3. Copy `config\scan-proxy-config.example.xlsx` to `config\scan-proxy-config.xlsx` and configure the rules.

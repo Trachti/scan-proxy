@@ -6,4 +6,4 @@ The repository intentionally tracks only `config/scan-proxy-config.example.xlsx`
 
 The SMB resolver reads Windows SMB state and Security event 5145 data. Run the auditing setup script only with an account authorized to change local audit policy, and grant the runtime account only the permissions it actually needs.
 
-Before making the repository public, review Git history as well as the current working tree for internal hostnames, UNC paths, usernames, IP ranges, and scanned documents.
+Before making the repository public, review Git history as well as the current working tree for internal hostnames, UNC paths, usernames, IP ranges, scanned documents, and metadata embedded in binary files such as Excel workbooks.

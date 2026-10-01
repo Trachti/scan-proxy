@@ -14,7 +14,7 @@ The `Rules` worksheet uses these columns:
 | `Mode` | Yes | `identifier`, `subfolder`, or `subfolders`. |
 | `Enabled` | Yes | `true`, `1`, `yes`, `on`, or `x` enables the rule. |
 | `Action` | No | `move` or `copy`. Defaults to `move`. |
-| `Scanner` | No | Optional analytics label. |
+| `Scanner` | No | Optional routing label stored with each scan record. Current aggregate reports group by scanner IP. |
 
 ### Identifier mode
 

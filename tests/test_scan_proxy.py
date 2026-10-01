@@ -96,6 +96,30 @@ class ScanProxyTests(unittest.TestCase):
             self.assertEqual(rules[0][6], "move")
             self.assertEqual(rules[0][7], "FrontDesk")
 
+    def test_repository_contains_expected_smb_helper(self):
+        helper = REPOSITORY_ROOT / "scripts" / "scan-proxy-smb.ps1"
+        legacy_helper = REPOSITORY_ROOT / "scripts" / "scanproxy-smb.ps1"
+        self.assertTrue(helper.is_file())
+        self.assertFalse(legacy_helper.exists())
+
+    def test_example_config_has_no_enabled_rules(self):
+        workbook_path = (
+            REPOSITORY_ROOT / "config" / "scan-proxy-config.example.xlsx"
+        )
+        workbook = scan_proxy.load_workbook(
+            workbook_path,
+            read_only=True,
+            data_only=True,
+        )
+        try:
+            worksheet = workbook["Rules"]
+            rows = list(worksheet.iter_rows(min_row=2, values_only=True))
+        finally:
+            workbook.close()
+
+        self.assertTrue(rows)
+        self.assertTrue(all(not scan_proxy.is_enabled(row[4]) for row in rows))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 # scan-proxy
 
-`scan-proxy` is a Windows-oriented scan routing service. It watches configured scan sources, safely copies or moves completed files to their destinations, resolves scanner client IP addresses from SMB state and Windows Security event 5145 data, and generates SQLite-backed CSV/HTML analytics.
+`scan-proxy` is a Windows scan-file routing service. It applies Excel-defined routing rules, waits for files to become stable, safely moves or copies them to their destinations, attributes scans to SMB clients using Windows SMB state and Security event 5145, and generates SQLite-backed CSV/HTML analytics.
 
 The repository contains only source code, examples, documentation, tests, and build/setup scripts. Production scans, logs, analytics state, internal paths, service account values, and live configuration are intentionally excluded.
 
@@ -42,6 +42,8 @@ scan-proxy/
 - Access to the configured source and destination paths.
 - Windows Detailed File Share auditing when event 5145 attribution is required.
 
+For SMB client attribution, run `scan-proxy` on the Windows SMB server that hosts the monitored source share. `Get-SmbOpenFile`, `Get-SmbSession`, and Security event 5145 describe SMB activity observed by the local server.
+
 ## Quick start
 
 Open PowerShell in the repository root and run:
@@ -76,7 +78,7 @@ The `Rules` worksheet uses the following English columns:
 | `Mode` | `identifier` | `identifier`, `subfolder`, or `subfolders`. |
 | `Enabled` | `true` | Enables or disables the rule. |
 | `Action` | `move` | `move` or `copy`. |
-| `Scanner` | `FrontDesk` | Optional analytics label. |
+| `Scanner` | `FrontDesk` | Optional routing label stored with each scan record. Current aggregate reports group by scanner IP. |
 
 See `docs/CONFIGURATION.md` for the full behavior.
 
@@ -87,7 +89,7 @@ Use environment variables instead of hard-coding internal values into source con
 The most important settings are:
 
 ```powershell
-$env:SCAN_PROXY_ROOT = 'E:\scan'
+$env:SCAN_PROXY_ROOT = 'C:\ScanProxy\data'
 $env:SCAN_PROXY_SMB_USER = 'scanner-service'
 $env:SCAN_PROXY_IGNORED_NETWORKS = '10.0.0.0/24;10.0.1.0/24'
 ```
