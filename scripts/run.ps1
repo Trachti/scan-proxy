@@ -1,18 +1,29 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$UsePython
+)
 
 $ErrorActionPreference = 'Stop'
-$RepositoryRoot = Split-Path -Parent $PSScriptRoot
-$EnvironmentFile = Join-Path $RepositoryRoot 'config\environment.local.ps1'
-$Python = Join-Path $RepositoryRoot '.venv\Scripts\python.exe'
-$Application = Join-Path $RepositoryRoot 'src\scan_proxy.py'
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$LocalEnvironment = Join-Path $RepoRoot 'config\environment.local.ps1'
 
-if (Test-Path $EnvironmentFile) {
-    . $EnvironmentFile
+if (Test-Path $LocalEnvironment) {
+    . $LocalEnvironment
 }
 
-if (-not (Test-Path $Python)) {
-    throw 'Virtual environment not found. Run scripts\install.ps1 first.'
+if ($UsePython) {
+    $Python = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    if (-not (Test-Path $Python)) {
+        throw "Python virtual environment not found: $Python"
+    }
+    & $Python (Join-Path $RepoRoot 'src\scan_proxy.py')
+    exit $LASTEXITCODE
 }
 
-& $Python $Application
+$Executable = Join-Path $RepoRoot 'dist\scan-proxy\scan-proxy.exe'
+if (-not (Test-Path $Executable)) {
+    throw "Built executable not found: $Executable. Run .\scripts\build.ps1 first."
+}
+
+& $Executable
+exit $LASTEXITCODE
