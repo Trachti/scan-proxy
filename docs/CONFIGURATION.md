@@ -1,37 +1,73 @@
 # Configuration
 
-## Excel configuration
+scan-proxy separates public code from deployment-specific settings. Keep production values in `config/environment.local.ps1` or another local environment mechanism and never commit them.
 
-The runtime configuration file is `config/scan-proxy-config.xlsx`. A safe example is stored as `config/scan-proxy-config.example.xlsx`.
+## Environment file
 
-The `Rules` worksheet uses these columns:
+Start with:
 
-| Column | Required | Description |
-| --- | --- | --- |
-| `Identifier` | Yes | File identifier used by `identifier` mode. |
-| `Source` | Yes | Source directory or UNC path. Relative paths are resolved below `SCAN_PROXY_ROOT`. |
-| `Destination` | Yes | Destination directory or UNC path. Relative paths are resolved below `SCAN_PROXY_ROOT`. |
-| `Mode` | Yes | `identifier`, `subfolder`, or `subfolders`. |
-| `Enabled` | Yes | `true`, `1`, `yes`, `on`, or `x` enables the rule. |
-| `Action` | No | `move` or `copy`. Defaults to `move`. |
-| `Scanner` | No | Optional analytics label. |
+```powershell
+Copy-Item .\config\environment.example.ps1 .\config\environment.local.ps1
+```
 
-### Identifier mode
+Then edit the local file.
 
-A rule with `Mode=identifier` matches files whose base name equals the configured identifier or whose file name starts with `<identifier>-`.
+### Core paths
 
-### Subfolder mode
+- `SCAN_PROXY_ROOT`: base path for relative routing paths.
+- `SCAN_PROXY_CONFIG`: routing workbook path.
+- `SCAN_PROXY_SMB_HELPER`: PowerShell SMB helper path.
 
-A rule with `Mode=subfolder` or `Mode=subfolders` recursively processes files below the configured source and preserves the relative path below the destination.
+### SMB attribution
 
-## Environment configuration
+- `SCAN_PROXY_SMB_USER`: SMB account to correlate with scanner access.
+- `SCAN_PROXY_IGNORED_NETWORKS`: semicolon-separated CIDRs that are never accepted as scanner clients.
+- `SCAN_PROXY_SMB_LIVE_LOOKBACK_MINUTES`: short live attribution window.
+- `SCAN_PROXY_SMB_EVENT_LOOKBACK_MINUTES`: wider history window for pending records.
+- `SCAN_PROXY_SMB_TIMEOUT_SECONDS`: timeout for one live helper call.
+- `SCAN_PROXY_SMB_BATCH_TIMEOUT_SECONDS`: timeout for one pending batch.
 
-Copy `config/environment.example.ps1` to `config/environment.local.ps1`. The local file is ignored by Git.
+### Scheduling
 
-Required environment-specific settings normally include:
+- `SCAN_PROXY_FILE_SCAN_INTERVAL_SECONDS`: routing scan interval.
+- `SCAN_PROXY_PENDING_SWEEP_INTERVAL_SECONDS`: pending attribution sweep interval.
+- `SCAN_PROXY_REPORT_REFRESH_INTERVAL_SECONDS`: CSV/HTML refresh interval.
+- `SCAN_PROXY_PENDING_BATCH_SIZE`: rows sent to one PowerShell batch.
+- `SCAN_PROXY_PENDING_MAX_HOURS`: maximum retry age before an item becomes unresolved.
 
-- `SCAN_PROXY_ROOT`: base directory used for relative paths.
-- `SCAN_PROXY_SMB_USER`: Windows/SMB account whose SMB activity should be attributed.
-- `SCAN_PROXY_IGNORED_NETWORKS`: semicolon- or comma-separated CIDR ranges that must never be treated as scanner clients.
+## Workbook schema
 
-Optional settings control the file scan interval, SMB query interval, SMB event lookback, configuration path, and SMB helper path.
+The preferred worksheet name is `Rules`.
+
+Required columns:
+
+- `Identifier`
+- `Source`
+- `Destination`
+- `Mode`
+- `Enabled` or `Status`
+
+Optional columns:
+
+- `Action`
+- `Scanner`
+
+Supported modes:
+
+- `identifier`: route files whose stem equals the identifier or whose file name starts with `identifier-`.
+- `subfolder` / `subfolders`: recursively preserve the source-relative folder structure.
+
+Supported actions:
+
+- `move`
+- `copy`
+
+## Security Event 5145
+
+The SMB helper uses the Detailed File Share audit category and Security Event 5145 for historical attribution. Enable it once from an elevated shell:
+
+```powershell
+.\scripts\scan-proxy-smb.ps1 -Mode Setup
+```
+
+Use `-Mode Status` to inspect currently open SMB files, active SMB sessions, and recent matching Event 5145 entries.
