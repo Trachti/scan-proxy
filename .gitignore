@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.spec
+
+# Local configuration and secrets
+config/environment.local.ps1
+config/scan-proxy-config.xlsx
+.env
+.env.*
+!.env.example
+
+# Runtime data
+logs/
+analytics/
+*.db
+*.db-shm
+*.db-wal
+*.part
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
