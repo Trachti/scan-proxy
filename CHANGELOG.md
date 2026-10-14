@@ -1,34 +1,16 @@
 # Changelog
 
-All notable changes to scan-proxy are documented here.
+## 2.13.0 — Trachti
 
-The project follows semantic versioning for public releases.
+- Incorporated the optimized scan cycle from the supplied 2.13.0 scripts into the public repository layout.
+- Kept Excel rule routing, atomic copy/move, recovery of incomplete moves, and optional SQLite-backed analytics.
+- Replaced per-file PowerShell calls with a cached `OpenSnapshot` and retained batched `ResolveBatch` lookups for historical event 5145 correlation.
+- Removed hard-coded organization-specific settings, account names, network ranges, and local server aliases.
+- Standardized source comments, functions, variable names, logs, workbook fields, output files, and the HTML interface in English.
+- Used `Trachti` as the project maintainer identifier.
+- Removed the workbook's optional person-identifying scanner label from runtime rule handling.
+- Disabled SMB attribution and hostname lookups by default until explicitly configured.
+- Minimized retention of resolved document paths in the local scans table; paths required for pending recovery are retained temporarily.
+- Added cross-platform routing tests and Windows PowerShell syntax validation in CI.
 
-## [2.12.0] - 2026-10-05
-
-### Added
-
-- Low-CPU batch resolution for pending SMB client attribution.
-- Grouped Windows Security Event 5145 lookups.
-- Persistent reverse-DNS cache with hostnames in analytics.
-- Separate pending-resolution and report-refresh schedules.
-- Exact open-file attribution cache to preserve high-confidence SMB matches.
-- Staggered retry backoff for unresolved client IP addresses.
-
-### Changed
-
-- Reduced PowerShell process creation during pending attribution.
-- Reduced SQLite write overhead and improved report indexes.
-- CSV and HTML reports are only rewritten when their content changes.
-- Weekly, monthly, and yearly CSV files are generated only for completed periods.
-- Public configuration uses environment variables instead of organization-specific defaults.
-- Source comments, public logs, status text, analytics UI, and example configuration are English.
-- Public runtime version is now reported as `2.12.0`.
-
-### Removed
-
-- Organization-specific usernames, network ranges, abbreviations, and administrative references from public defaults.
-
-## [2.11.0]
-
-Previous public release. See the repository history for the exact changes in that version.
+This is an update bundle based on the two supplied scripts, not a verified GitHub release. The existing repository and previous release assets must be reviewed separately. Deployments should review environment variables and test on Windows before replacing a production instance.
