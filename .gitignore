@@ -1,4 +1,4 @@
-# Python
+# Python build/runtime files
 __pycache__/
 *.py[cod]
 .venv/
@@ -6,23 +6,25 @@ venv/
 build/
 dist/
 *.spec
+.pytest_cache/
 
-# Local configuration and secrets
+# Local configuration, secrets, and temporary files
 config/environment.local.ps1
 config/scan-proxy-config.xlsx
 .env
 .env.*
 !.env.example
+*.part
 
-# Runtime data
+# Filesystem state and reports
 logs/
 analytics/
 *.db
-*.db-shm
 *.db-wal
-*.part
+*.db-shm
+*.sqlite3
 
-# Editors / OS
+# Editors and OS files
 .vscode/
 .idea/
 .DS_Store
