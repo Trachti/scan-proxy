@@ -1,29 +1,25 @@
 [CmdletBinding()]
-param(
-    [switch]$UsePython
-)
+param([switch]$UsePython)
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$LocalEnvironment = Join-Path $RepoRoot 'config\environment.local.ps1'
-
+$RepositoryRoot = Split-Path -Parent $PSScriptRoot
+$LocalEnvironment = Join-Path $RepositoryRoot 'config\environment.local.ps1'
 if (Test-Path $LocalEnvironment) {
     . $LocalEnvironment
 }
+if (-not $env:SCAN_PROXY_CONFIG) {
+    $env:SCAN_PROXY_CONFIG = Join-Path $RepositoryRoot 'config\scan-proxy-config.xlsx'
+}
 
-if ($UsePython) {
-    $Python = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    if (-not (Test-Path $Python)) {
-        throw "Python virtual environment not found: $Python"
-    }
-    & $Python (Join-Path $RepoRoot 'src\scan_proxy.py')
+$Executable = Join-Path $RepositoryRoot 'dist\scan-proxy\scan-proxy.exe'
+if (-not $UsePython -and (Test-Path $Executable)) {
+    & $Executable
     exit $LASTEXITCODE
 }
 
-$Executable = Join-Path $RepoRoot 'dist\scan-proxy\scan-proxy.exe'
-if (-not (Test-Path $Executable)) {
-    throw "Built executable not found: $Executable. Run .\scripts\build.ps1 first."
+$Python = Join-Path $RepositoryRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path $Python)) {
+    throw "Python virtual environment not found: $Python. Run .\scripts\install.ps1 first."
 }
-
-& $Executable
+& $Python (Join-Path $RepositoryRoot 'src\scan_proxy.py')
 exit $LASTEXITCODE

@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Resolve','ResolveBatch','Setup','Status')][string]$Mode='Resolve',
+    [ValidateSet('Resolve','ResolveBatch','OpenSnapshot','Setup','Status')][string]$Mode='Resolve',
     [string]$FilePath,
     [string]$RelativePath,
-    [string]$UserName='scanner-service',
+    [string]$UserName='',
     [int]$LookbackMinutes=10,
     [string]$ReferenceTimeUtc,
     [int]$AmbiguitySeconds=8,
@@ -11,9 +11,8 @@ param(
     [string]$IgnoredNetworks=''
 )
 
-$Version = '2.12.0'
-# 2026-09-18 | Trachti | Added batched low-CPU SMB attribution and grouped Event 5145 queries.
-# 2026-09-18 | Trachti | Added direct UNC-to-share-relative path matching.
+$Version = '2.13.0'
+# Maintainer: Trachti. Deployment-specific accounts and network ranges are not bundled.
 
 $ErrorActionPreference='Stop'
 $DetailedFileShareGuid='{0CCE9244-69AE-11D9-BED3-505054503030}'
@@ -22,105 +21,136 @@ $IgnoredNetworkList=@(
         ForEach-Object {$_.Trim()} |
         Where-Object {$_}
 )
-function User($v){
-    if(!$v){return ''}
-    (($v.Trim() -split '\\')[-1] -split '@')[0].ToLowerInvariant()
+
+function Normalize-UserName($value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    return (($value.Trim() -split '\\')[-1] -split '@')[0].ToLowerInvariant()
 }
-function SameUser($a,$b){ !$b -or (User $a) -eq (User $b) }
-function Rel($v){
-    if(!$v){return ''}
-    $v.Trim().Replace('/','\').Trim('\').ToLowerInvariant()
+
+function Test-SameUser($actualUserName, $expectedUserName) {
+    if ([string]::IsNullOrWhiteSpace($expectedUserName)) { return $false }
+    return (Normalize-UserName $actualUserName) -eq (Normalize-UserName $expectedUserName)
 }
-function PathNorm($v){
-    if(!$v){return ''}
-    $p=$v.Trim().Replace('/','\')
-    if($p.StartsWith('\??\')){$p=$p.Substring(4)}
-    elseif($p.StartsWith('\\?\')){$p=$p.Substring(4)}
-    $p.TrimEnd('\').ToLowerInvariant()
+
+function Normalize-RelativePath($value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    return $value.Trim().Replace('/', '\').Trim('\').ToLowerInvariant()
 }
-function RelativeFromUnc($v){
-    if(!$v){return ''}
-    $p=$v.Trim().Replace('/','\')
-    if($p -match '^\\\\[^\\]+\\[^\\]+\\(.+)$'){
-        return Rel $Matches[1]
+
+function Normalize-FullPath($value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    $normalizedPath = $value.Trim().Replace('/', '\')
+    if ($normalizedPath.StartsWith('\??\')) {
+        $normalizedPath = $normalizedPath.Substring(4)
+    } elseif ($normalizedPath.StartsWith('\\?\')) {
+        $normalizedPath = $normalizedPath.Substring(4)
+    }
+    return $normalizedPath.TrimEnd('\').ToLowerInvariant()
+}
+
+function Get-RelativePathFromUnc($value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    $normalizedPath = $value.Trim().Replace('/', '\')
+    if ($normalizedPath -match '^\\\\[^\\]+\\[^\\]+\\(.+)$') {
+        return Normalize-RelativePath $Matches[1]
     }
     return ''
 }
 
-function Client($v){
-    if(!$v){return ''}
-    $s=$v.Trim().Trim('[',']')
-    if($s.StartsWith('::ffff:')){$s=$s.Substring(7)}
-    $ip=$null
-    if(![Net.IPAddress]::TryParse(($s -split '%')[0],[ref]$ip)){return ''}
-    if($ip.IsIPv4MappedToIPv6){$ip=$ip.MapToIPv4()}
-    $n=$ip.ToString()
-    if($n -in @('127.0.0.1','::1','0.0.0.0','::')){return ''}
-    $n
-}
-function IPv4Number($v){
-    try{
-        $ip=[Net.IPAddress]::Parse($v)
-        if($ip.IsIPv4MappedToIPv6){$ip=$ip.MapToIPv4()}
-        $b=$ip.GetAddressBytes()
-        if($b.Length -ne 4){return $null}
-        [uint64]$b[0]*16777216 + [uint64]$b[1]*65536 + [uint64]$b[2]*256 + [uint64]$b[3]
-    }catch{return $null}
-}
-function InCidr($ip,$cidr){
-    try{
-        $parts=$cidr -split '/',2
-        if($parts.Count -ne 2){return $false}
-        $a=IPv4Number $ip
-        $n=IPv4Number $parts[0]
-        if($null -eq $a -or $null -eq $n){return $false}
-        $prefix=0
-        if(![int]::TryParse($parts[1],[ref]$prefix) -or $prefix -lt 0 -or $prefix -gt 32){return $false}
-        $block=[uint64][Math]::Pow(2,32-$prefix)
-        ([uint64][Math]::Floor($a/$block)) -eq ([uint64][Math]::Floor($n/$block))
-    }catch{return $false}
-}
-function ScannerClient($v){
-    $c=Client $v
-    if(!$c){return ''}
-    foreach($cidr in $IgnoredNetworkList){if(InCidr $c $cidr){return ''}}
-    $c
+function Normalize-ClientIp($value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return '' }
+    $candidate = $value.Trim().Trim('[', ']')
+    if ($candidate.StartsWith('::ffff:')) { $candidate = $candidate.Substring(7) }
+    $parsedAddress = $null
+    if (-not [Net.IPAddress]::TryParse(($candidate -split '%')[0], [ref]$parsedAddress)) {
+        return ''
+    }
+    if ($parsedAddress.IsIPv4MappedToIPv6) { $parsedAddress = $parsedAddress.MapToIPv4() }
+    $normalizedIp = $parsedAddress.ToString()
+    if ($normalizedIp -in @('127.0.0.1', '::1', '0.0.0.0', '::')) { return '' }
+    return $normalizedIp
 }
 
-function Map($e){
-    $x=[xml]$e.ToXml()
-    $h=@{}
-    foreach($d in $x.Event.EventData.Data){
-        $h[[string]$d.Name]=[string]$d.'#text'
-    }
-    $h
-}
-function ResultObject($client,$source,$reason,$record=0,$open=$false,$confidence='None',$id=$null){
-    $o=[ordered]@{
-        Client=$client
-        Source=$source
-        Reason=$reason
-        RecordId=[long]$record
-        Open=[bool]$open
-        Confidence=$confidence
-    }
-    if($null -ne $id){$o.Id=[string]$id}
-    [pscustomobject]$o
-}
-function Result($client,$source,$reason,$record=0,$open=$false,$confidence='None'){
-    ResultObject $client $source $reason $record $open $confidence | ConvertTo-Json -Compress
-}
-function WriteLike($mask){
-    try{
-        $v=if($mask.StartsWith('0x')){
-            [Convert]::ToUInt32($mask.Substring(2),16)
-        }else{
-            [Convert]::ToUInt32($mask,10)
+# Compare IPv4 and IPv6 CIDRs without assuming a particular server network.
+function Test-InCidr($address, $cidr) {
+    try {
+        $parts = $cidr -split '/', 2
+        if ($parts.Count -ne 2) { return $false }
+        $clientAddress = [Net.IPAddress]::Parse($address)
+        $networkAddress = [Net.IPAddress]::Parse($parts[0])
+        if ($clientAddress.IsIPv4MappedToIPv6) { $clientAddress = $clientAddress.MapToIPv4() }
+        if ($networkAddress.IsIPv4MappedToIPv6) { $networkAddress = $networkAddress.MapToIPv4() }
+        if ($clientAddress.AddressFamily -ne $networkAddress.AddressFamily) { return $false }
+        $clientBytes = $clientAddress.GetAddressBytes()
+        $networkBytes = $networkAddress.GetAddressBytes()
+        $prefix = 0
+        if (-not [int]::TryParse($parts[1], [ref]$prefix)) { return $false }
+        if ($prefix -lt 0 -or $prefix -gt $clientBytes.Length * 8) { return $false }
+        $fullBytes = [int][Math]::Floor($prefix / 8)
+        for ($index = 0; $index -lt $fullBytes; $index++) {
+            if ($clientBytes[$index] -ne $networkBytes[$index]) { return $false }
         }
-        ($v -band [uint32]0x400D0156)-ne 0
-    }catch{$false}
+        $remainingBits = $prefix % 8
+        if ($remainingBits -gt 0) {
+            $mask = [int](256 - [Math]::Pow(2, 8 - $remainingBits))
+            if (($clientBytes[$fullBytes] -band $mask) -ne ($networkBytes[$fullBytes] -band $mask)) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+function Get-ScannerClientIp($value) {
+    $clientIp = Normalize-ClientIp $value
+    if (-not $clientIp) { return '' }
+    foreach ($ignoredNetwork in $IgnoredNetworkList) {
+        if (Test-InCidr $clientIp $ignoredNetwork) { return '' }
+    }
+    return $clientIp
 }
 
+function Convert-EventData($record) {
+    $eventXml = [xml]$record.ToXml()
+    $values = @{}
+    foreach ($element in $eventXml.Event.EventData.Data) {
+        $values[[string]$element.Name] = [string]$element.'#text'
+    }
+    return $values
+}
+
+function New-ResolutionResult($clientIp, $source, $reason, $recordId=0, $isOpen=$false, $confidence='None', $id=$null) {
+    $result = [ordered]@{
+        Client = $clientIp
+        Source = $source
+        Reason = $reason
+        RecordId = [long]$recordId
+        Open = [bool]$isOpen
+        Confidence = $confidence
+    }
+    if ($null -ne $id) { $result.Id = [string]$id }
+    return [pscustomobject]$result
+}
+
+function Write-ResolutionResult($clientIp, $source, $reason, $recordId=0, $isOpen=$false, $confidence='None') {
+    New-ResolutionResult $clientIp $source $reason $recordId $isOpen $confidence | ConvertTo-Json -Compress
+}
+
+function Test-WriteAccess($accessMask) {
+    try {
+        if ($accessMask.StartsWith('0x')) {
+            $value = [Convert]::ToUInt32($accessMask.Substring(2), 16)
+        } else {
+            $value = [Convert]::ToUInt32($accessMask, 10)
+        }
+        return ($value -band [uint32]0x400D0156) -ne 0
+    } catch {
+        return $false
+    }
+}
+
+# Enable detailed file share auditing (requires elevation).
 if($Mode -eq 'Setup'){
     & auditpol.exe /set /subcategory:$DetailedFileShareGuid /success:enable | Out-Host
     if($LASTEXITCODE){exit $LASTEXITCODE}
@@ -128,35 +158,49 @@ if($Mode -eq 'Setup'){
     exit 0
 }
 
+
+if ([string]::IsNullOrWhiteSpace($UserName)) {
+    if ($Mode -eq 'Status') {
+        Write-Host 'SMB attribution is disabled: configure -UserName explicitly.'
+    } elseif ($Mode -eq 'ResolveBatch') {
+        ConvertTo-Json -InputObject @() -Compress
+    } elseif ($Mode -eq 'OpenSnapshot') {
+        ConvertTo-Json -InputObject @() -Compress
+    } else {
+        Write-ResolutionResult '' 'None' 'SMB attribution requires a configured user account'
+    }
+    exit 0
+}
+
 if($Mode -eq 'Status'){
-    Write-Host "scanproxy-smb $Version"
+    Write-Host "scan-proxy-smb $Version"
     Write-Host "Lookback=$LookbackMinutes min | SessionFallbackMaxAge=$SessionFallbackMaxAgeSeconds s | Ignored networks=$($IgnoredNetworkList -join ',')"
     & auditpol.exe /get /subcategory:$DetailedFileShareGuid
     Write-Host "`nCurrently open SMB files:"
     Get-SmbOpenFile -ErrorAction SilentlyContinue |
-        Where-Object {SameUser $_.ClientUserName $UserName} |
-        Where-Object {ScannerClient $_.ClientComputerName} |
+        Where-Object {Test-SameUser $_.ClientUserName $UserName} |
+        Where-Object {Get-ScannerClientIp $_.ClientComputerName} |
         Select-Object Path,ShareRelativePath,ClientComputerName,ClientUserName |
         Format-Table -AutoSize
 
     Write-Host "`nCurrent SMB sessions:"
     Get-SmbSession -ErrorAction SilentlyContinue |
-        Where-Object {SameUser $_.ClientUserName $UserName} |
-        Where-Object {ScannerClient $_.ClientComputerName} |
+        Where-Object {Test-SameUser $_.ClientUserName $UserName} |
+        Where-Object {Get-ScannerClientIp $_.ClientComputerName} |
         Select-Object ClientComputerName,ClientUserName,NumOpens |
         Format-Table -AutoSize
 
-    Write-Host "`nRecent Event 5145 matches for user ${UserName}:"
+    Write-Host "`nRecent event 5145 matches for user ${UserName}:"
     try{
         $statusStart=(Get-Date).AddMinutes(-[Math]::Abs($LookbackMinutes))
         $statusEvents=@(
             Get-WinEvent -FilterHashtable @{LogName='Security';Id=5145;StartTime=$statusStart} -ErrorAction Stop |
                 ForEach-Object {
-                    $d=Map $_
-                    if(SameUser $d.SubjectUserName $UserName){
+                    $d=Convert-EventData $_
+                    if(Test-SameUser $d.SubjectUserName $UserName){
                         [pscustomobject]@{
                             TimeCreated=$_.TimeCreated
-                            Client=(ScannerClient $d.IpAddress)
+                            Client=(Get-ScannerClientIp $d.IpAddress)
                             RelativeTargetName=$d.RelativeTargetName
                             AccessMask=$d.AccessMask
                             RecordId=$_.RecordId
@@ -165,16 +209,38 @@ if($Mode -eq 'Status'){
                 } |
                 Where-Object {$_.Client}
         )
-        Write-Host "5145 events in lookback: $($statusEvents.Count)"
+        Write-Host "5145 events in lookback window: $($statusEvents.Count)"
         $statusEvents |
             Sort-Object TimeCreated -Descending |
             Select-Object -First 15 |
             Format-Table -AutoSize
     }catch{
-        Write-Warning "Security Event 5145 could not be read: $($_.Exception.Message)"
+        Write-Warning "Could not read Windows Security event 5145: $($_.Exception.Message)"
     }
     exit 0
 }
+
+# Return a single, low-cost snapshot of open SMB files.
+if($Mode -eq 'OpenSnapshot'){
+    $rows=@(
+        Get-SmbOpenFile -ErrorAction SilentlyContinue |
+            Where-Object {Test-SameUser $_.ClientUserName $UserName} |
+            ForEach-Object {
+                $c=Get-ScannerClientIp $_.ClientComputerName
+                if($c){
+                    [pscustomobject]@{
+                        Client=$c
+                        Path=(Normalize-FullPath $_.Path)
+                        RelativePath=(Normalize-RelativePath $_.ShareRelativePath)
+                    }
+                }
+            }
+    )
+    ConvertTo-Json -InputObject $rows -Compress -Depth 3
+    exit 0
+}
+
+# Resolve historical pending entries in one PowerShell process.
 if($Mode -eq 'ResolveBatch'){
     try{
         $raw=[Console]::In.ReadToEnd()
@@ -193,8 +259,8 @@ if($Mode -eq 'ResolveBatch'){
             $id=[string]$item.Id
             if([string]::IsNullOrWhiteSpace($id)){continue}
             $fp=[string]$item.FilePath
-            $rel=RelativeFromUnc $fp
-            if(!$rel){$rel=Rel ([string]$item.RelativePath)}
+            $rel=Get-RelativePathFromUnc $fp
+            if(!$rel){$rel=Normalize-RelativePath ([string]$item.RelativePath)}
             $ref=[DateTime]::UtcNow
             try{
                 if($item.ReferenceTimeUtc){
@@ -203,7 +269,7 @@ if($Mode -eq 'ResolveBatch'){
             }catch{}
             [pscustomobject]@{
                 Id=$id
-                File=(PathNorm $fp)
+                File=(Normalize-FullPath $fp)
                 Relative=$rel
                 Ref=$ref
                 Bucket=[long][Math]::Floor(
@@ -214,18 +280,19 @@ if($Mode -eq 'ResolveBatch'){
     )
 
     $results=@{}
+
     $openRows=@()
     try{
         $openRows=@(
             Get-SmbOpenFile -ErrorAction Stop |
-                Where-Object {SameUser $_.ClientUserName $UserName} |
+                Where-Object {Test-SameUser $_.ClientUserName $UserName} |
                 ForEach-Object {
-                    $c=ScannerClient $_.ClientComputerName
+                    $c=Get-ScannerClientIp $_.ClientComputerName
                     if($c){
                         [pscustomobject]@{
                             Client=$c
-                            File=(PathNorm $_.Path)
-                            Relative=(Rel $_.ShareRelativePath)
+                            File=(Normalize-FullPath $_.Path)
+                            Relative=(Normalize-RelativePath $_.ShareRelativePath)
                         }
                     }
                 }
@@ -253,16 +320,17 @@ if($Mode -eq 'ResolveBatch'){
                     Select-Object -ExpandProperty Client -Unique
             )
             if($clients.Count -eq 1){
-                $results[[string]$item.Id]=ResultObject $clients[0] 'Get-SmbOpenFile' 'Batch: exact currently open SMB file' 0 $true 'ExactOpenFile' $item.Id
+                $results[[string]$item.Id]=New-ResolutionResult $clients[0] 'Get-SmbOpenFile' 'Batch: exact currently open SMB file' 0 $true 'ExactOpenFile' $item.Id
                 continue
             }
             if($clients.Count -gt 1){
-                $results[[string]$item.Id]=ResultObject '' 'None' 'Batch: ambiguous open SMB file' 0 $false 'Ambiguous' $item.Id
+                $results[[string]$item.Id]=New-ResolutionResult '' 'None' 'Batch: ambiguous open SMB file' 0 $false 'Ambiguous' $item.Id
                 continue
             }
         }
         $unresolved += $item
     }
+
     foreach($group in @($unresolved | Group-Object Bucket)){
         $members=@($group.Group)
         if(!$members.Count){continue}
@@ -280,24 +348,24 @@ if($Mode -eq 'ResolveBatch'){
                 } -ErrorAction Stop |
                     ForEach-Object {
                         $event=$_
-                        $d=Map $event
-                        if(SameUser $d.SubjectUserName $UserName){
-                            $c=ScannerClient $d.IpAddress
+                        $d=Convert-EventData $event
+                        if(Test-SameUser $d.SubjectUserName $UserName){
+                            $c=Get-ScannerClientIp $d.IpAddress
                             if($c){
                                 $local=''
                                 try{
-                                    $local=PathNorm ([IO.Path]::Combine(
-                                        (PathNorm $d.ShareLocalPath),
+                                    $local=Normalize-FullPath ([IO.Path]::Combine(
+                                        (Normalize-FullPath $d.ShareLocalPath),
                                         ([string]$d.RelativeTargetName).TrimStart('\')
                                     ))
                                 }catch{}
                                 [pscustomobject]@{
                                     Client=$c
                                     File=$local
-                                    Relative=(Rel $d.RelativeTargetName)
+                                    Relative=(Normalize-RelativePath $d.RelativeTargetName)
                                     Time=$event.TimeCreated.ToUniversalTime()
                                     Record=$event.RecordId
-                                    Write=(WriteLike $d.AccessMask)
+                                    Write=(Test-WriteAccess $d.AccessMask)
                                 }
                             }
                         }
@@ -343,18 +411,18 @@ if($Mode -eq 'ResolveBatch'){
                 if($clients.Count -eq 1){
                     $best=$recent | Where-Object Client -eq $clients[0] |
                         Sort-Object Write,Time -Descending | Select-Object -First 1
-                    $results[[string]$item.Id]=ResultObject $best.Client 'Security-5145' 'Batch: unambiguous file Event 5145' $best.Record $false 'ExactPathRecent' $item.Id
+                    $results[[string]$item.Id]=New-ResolutionResult $best.Client 'Security-5145' 'Batch: unambiguous file event 5145' $best.Record $false 'ExactPathRecent' $item.Id
                     continue
                 }
                 if($writes.Count -eq 1){
                     $best=$recent | Where-Object {$_.Client -eq $writes[0] -and $_.Write} |
                         Sort-Object Time -Descending | Select-Object -First 1
-                    $results[[string]$item.Id]=ResultObject $best.Client 'Security-5145' 'Batch: exactly one writing client' $best.Record $false 'ExactPathWrite' $item.Id
+                    $results[[string]$item.Id]=New-ResolutionResult $best.Client 'Security-5145' 'Batch: one unambiguous writing client' $best.Record $false 'ExactPathWrite' $item.Id
                     continue
                 }
-                $results[[string]$item.Id]=ResultObject '' 'None' 'Batch: ambiguous 5145 file events' 0 $false 'Ambiguous' $item.Id
+                $results[[string]$item.Id]=New-ResolutionResult '' 'None' 'Batch: ambiguous file events 5145' 0 $false 'Ambiguous' $item.Id
             }else{
-                $results[[string]$item.Id]=ResultObject '' 'None' 'Batch: no matching 5145 file event' 0 $false 'None' $item.Id
+                $results[[string]$item.Id]=New-ResolutionResult '' 'None' 'Batch: no matching file event 5145' 0 $false 'None' $item.Id
             }
         }
     }
@@ -365,7 +433,7 @@ if($Mode -eq 'ResolveBatch'){
             if($results.ContainsKey($key)){
                 $results[$key]
             }else{
-                ResultObject '' 'None' 'Batch: no unambiguous SMB client IP mapping' 0 $false 'None' $item.Id
+                New-ResolutionResult '' 'None' 'Batch: no unambiguous SMB client IP' 0 $false 'None' $item.Id
             }
         }
     )
@@ -374,22 +442,23 @@ if($Mode -eq 'ResolveBatch'){
 }
 
 if(!$FilePath){
-    Result '' 'None' 'FilePath is missing'
+    Write-ResolutionResult '' 'None' 'FilePath is required'
     exit 0
 }
 
-$file=PathNorm $FilePath
-$relative=RelativeFromUnc $FilePath
-if(!$relative){$relative=Rel $RelativePath}
+$file=Normalize-FullPath $FilePath
+$relative=Get-RelativePathFromUnc $FilePath
+if(!$relative){$relative=Normalize-RelativePath $RelativePath}
+
 try{
     $hits=@(
         Get-SmbOpenFile -ErrorAction Stop |
-            Where-Object {SameUser $_.ClientUserName $UserName} |
+            Where-Object {Test-SameUser $_.ClientUserName $UserName} |
             ForEach-Object {
-                $c=ScannerClient $_.ClientComputerName
-                $strength=if((PathNorm $_.Path)-eq $file){
+                $c=Get-ScannerClientIp $_.ClientComputerName
+                $strength=if((Normalize-FullPath $_.Path)-eq $file){
                     3
-                }elseif($relative -and (Rel $_.ShareRelativePath)-eq $relative){
+                }elseif($relative -and (Normalize-RelativePath $_.ShareRelativePath)-eq $relative){
                     2
                 }else{
                     0
@@ -407,15 +476,16 @@ try{
                 Select-Object -Expand Client -Unique
         )
         if($clients.Count -eq 1){
-            Result $clients[0] 'Get-SmbOpenFile' 'Exact currently open SMB file' 0 $true 'ExactOpenFile'
+            Write-ResolutionResult $clients[0] 'Get-SmbOpenFile' 'Exact currently open SMB file' 0 $true 'ExactOpenFile'
             exit 0
         }
         if($clients.Count -gt 1){
-            Result '' 'None' 'Ambiguous open SMB file' 0 $false 'Ambiguous'
+            Write-ResolutionResult '' 'None' 'Ambiguous open SMB file' 0 $false 'Ambiguous'
             exit 0
         }
     }
 }catch{}
+
 try{
     $ref=if($ReferenceTimeUtc){
         [DateTime]::Parse($ReferenceTimeUtc).ToUniversalTime()
@@ -437,20 +507,20 @@ try{
     } -ErrorAction Stop
     $matches=@(
         foreach($e in $events){
-            $d=Map $e
-            if(!(SameUser $d.SubjectUserName $UserName)){continue}
-            $c=ScannerClient $d.IpAddress
+            $d=Convert-EventData $e
+            if(!(Test-SameUser $d.SubjectUserName $UserName)){continue}
+            $c=Get-ScannerClientIp $d.IpAddress
             if(!$c){continue}
             $local=''
             try{
-                $local=PathNorm ([IO.Path]::Combine(
-                    (PathNorm $d.ShareLocalPath),
+                $local=Normalize-FullPath ([IO.Path]::Combine(
+                    (Normalize-FullPath $d.ShareLocalPath),
                     ([string]$d.RelativeTargetName).TrimStart('\')
                 ))
             }catch{}
             $strength=if($local -and $local -eq $file){
                 3
-            }elseif($relative -and (Rel $d.RelativeTargetName)-eq $relative){
+            }elseif($relative -and (Normalize-RelativePath $d.RelativeTargetName)-eq $relative){
                 2
             }else{
                 0
@@ -461,7 +531,7 @@ try{
                     Strength=$strength
                     Time=$e.TimeCreated.ToUniversalTime()
                     Record=$e.RecordId
-                    Write=(WriteLike $d.AccessMask)
+                    Write=(Test-WriteAccess $d.AccessMask)
                 }
             }
         }
@@ -481,7 +551,7 @@ try{
                 Where-Object Client -eq $clients[0] |
                 Sort-Object Write,Time -Descending |
                 Select-Object -First 1
-            Result $best.Client 'Security-5145' 'Unambiguous file Event 5145' $best.Record $false 'ExactPathRecent'
+            Write-ResolutionResult $best.Client 'Security-5145' 'Unambiguous file event 5145' $best.Record $false 'ExactPathRecent'
             exit 0
         }
         if($writes.Count -eq 1){
@@ -489,32 +559,33 @@ try{
                 Where-Object {$_.Client -eq $writes[0] -and $_.Write} |
                 Sort-Object Time -Descending |
                 Select-Object -First 1
-            Result $best.Client 'Security-5145' 'Exactly one writing client in the time window' $best.Record $false 'ExactPathWrite'
+            Write-ResolutionResult $best.Client 'Security-5145' 'One writing client in the selected time window' $best.Record $false 'ExactPathWrite'
             exit 0
         }
-        Result '' 'None' 'Ambiguous 5145 file events' 0 $false 'Ambiguous'
+        Write-ResolutionResult '' 'None' 'Ambiguous file events 5145' 0 $false 'Ambiguous'
         exit 0
     }
 }catch{}
+
 if($referenceAgeSeconds -le [Math]::Max(0,$SessionFallbackMaxAgeSeconds)){
     try{
         $clients=@(
             Get-SmbSession -ErrorAction Stop |
-                Where-Object {SameUser $_.ClientUserName $UserName} |
-                ForEach-Object {ScannerClient $_.ClientComputerName} |
+                Where-Object {Test-SameUser $_.ClientUserName $UserName} |
+                ForEach-Object {Get-ScannerClientIp $_.ClientComputerName} |
                 Where-Object {$_} |
                 Sort-Object -Unique
         )
         if($clients.Count -eq 1){
-            Result $clients[0] 'Get-SmbSession' 'Exactly one recent SMB session for user' 0 $false 'UniqueSessionRecent'
+            Write-ResolutionResult $clients[0] 'Get-SmbSession' 'One recent SMB session for the configured user' 0 $false 'UniqueSessionRecent'
             exit 0
         }
         if($clients.Count -gt 1){
-            Result '' 'None' 'Multiple SMB sessions; no reliable mapping' 0 $false 'Ambiguous'
+            Write-ResolutionResult '' 'None' 'Multiple SMB sessions; attribution is ambiguous' 0 $false 'Ambiguous'
             exit 0
         }
     }catch{}
 }
 
-Result '' 'None' "No unambiguous SMB client IP mapping; ignored: $($IgnoredNetworkList -join ',')"
+Write-ResolutionResult '' 'None' "No unambiguous SMB client IP; ignored networks: $($IgnoredNetworkList -join ',')"
 exit 0
