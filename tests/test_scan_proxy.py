@@ -26,7 +26,7 @@ SPEC.loader.exec_module(scan_proxy)
 
 class ScanProxyTests(unittest.TestCase):
     def test_version_and_neutral_smb_defaults(self):
-        self.assertEqual(scan_proxy.VERSION, "2.13.1")
+        self.assertEqual(scan_proxy.VERSION, "2.14.0")
         self.assertEqual(scan_proxy.SMB_IGNORED_NETWORKS, ())
         # An explicit SMB user is required for production attribution.
         if not os.environ.get("SCAN_PROXY_SMB_USER"):

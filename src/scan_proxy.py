@@ -31,7 +31,7 @@ except ImportError:
     PdfReader = None
 
 
-VERSION = "2.13.1"
+VERSION = "2.14.0"
 # Changes:
 # 2026-09-18 | Trachti | Added restricted Event 5140 fallback after Event 5145 misses.
 # 2026-09-18 | Trachti | Optimized SMB open-file snapshot and pending batch resolution.

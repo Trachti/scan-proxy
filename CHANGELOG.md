@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.13.1 — Trachti (2026-10-22 public integration)
+## 2.14.0 — Trachti (2026-10-22 public integration)
 
-- Integrated the supplied 2.13.1 Python service and PowerShell SMB resolver into the existing public `src/`, `scripts/`, `config/` layout.
+- Integrated the supplied Python service and PowerShell SMB resolver into the existing public `src/`, `scripts/`, `config/` layout.
 - Added an Event 5140 share-access fallback **only when** there is no stronger Event 5145 match, the SMB account/share match, access is within the narrow configured time window, and exactly one client IP is observed.
 - Maintained the optimized `OpenSnapshot` hot path, grouped `ResolveBatch`, file-scan interval, pending-IP backoff, SQLite caching, dirty-report writes and daily/weekly/monthly/yearly analytics.
 - Standardized public comments, runtime messages, workbook columns, log filenames, report filenames and HTML interface in English.

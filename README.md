@@ -1,14 +1,14 @@
 # Scan Proxy
 
 **Maintainer:** Trachti  
-**Version:** 2.13.1 (source update; Windows deployment validation required)  
+**Version:** 2.14.0 (release package; Windows deployment validation required)  
 **Platform:** Windows 10/11 or Windows Server, Windows PowerShell 5.1, Python 3.10+
 
 Scan Proxy routes completed scan files according to an Excel workbook and produces local SQLite/CSV/HTML analytics. It can optionally attribute transfers to scanner IPs through Windows SMB open-file information and Security events **5145** and **5140**, without running a PowerShell process for every file.
 
 > **Privacy first:** This public project contains no live organization names, internal hosts, credentials, production CIDRs, scanner documents or operational reports. Provide deployment-specific values only in `config/environment.local.ps1` and `config/scan-proxy-config.xlsx`, both excluded from Git. IP attribution and reverse DNS are disabled until explicitly configured.
 
-## 1. What is new in 2.13.1?
+## 1. What is new in 2.14.0?
 
 - Keep the optimized 2.13.0 file scan, cached rules, per-scan SMB `OpenSnapshot`, grouped `ResolveBatch` and low-CPU retry mechanism.
 - Prefer **exact file evidence from Security event 5145**. Use Security event **5140 only as a restricted fallback** when the account, share, short time window and exactly one client IP match. Event 5140 identifies a *share*, not a specific file: this is weaker evidence and must not be treated as exact file identification.
@@ -69,7 +69,7 @@ git clone https://github.com/Trachti/scan-proxy.git C:\ScanProxy
 Set-Location C:\ScanProxy
 ```
 
-If you obtained the **2.13.1 update ZIP** separately, extract it into the repository folder, replacing the files with the same relative paths (see [GitHub update guide](docs/GITHUB-UPLOAD.md)). Do not extract everything into a second nested `scan-proxy` folder.
+If you obtained the **2.14.0 update ZIP** separately, extract it into the repository folder, replacing the files with the same relative paths (see [GitHub update guide](docs/GITHUB-UPLOAD.md)). Do not extract everything into a second nested `scan-proxy` folder.
 
 ### Step 2 — Install the Python dependencies
 
@@ -134,7 +134,7 @@ Set-Location C:\ScanProxy
 .\scripts\run.ps1 -UsePython
 ```
 
-A line like `Scanproxy 2.13.1 running. Press Ctrl+C to stop.` indicates the process started. Put a **test** file named `DOC-test.txt` in `C:\ScanData\incoming`, then check `C:\ScanData\routed\DOC-test.txt` after a few seconds. **Use synthetic data first**; `move` deletes its source after successfully committing the destination.
+A line like `Scanproxy 2.14.0 running. Press Ctrl+C to stop.` indicates the process started. Put a **test** file named `DOC-test.txt` in `C:\ScanData\incoming`, then check `C:\ScanData\routed\DOC-test.txt` after a few seconds. **Use synthetic data first**; `move` deletes its source after successfully committing the destination.
 
 Use **Ctrl+C** to stop. The program rereads the Excel workbook when its modification time changes, so editing the workbook normally does not require a restart.
 
@@ -237,7 +237,7 @@ State tables are retained across source updates, but do not make the first upgra
 
 ## 11. Publish this update to GitHub
 
-See [GITHUB-UPLOAD.md](docs/GITHUB-UPLOAD.md) for every folder, filename and exact GitHub website click. The 2.13.1 update archive is an **overlay** for the existing repository: it does not rewrite `LICENSE` or unrelated files, and it does **not** automatically commit or push to GitHub.
+See [GITHUB-UPLOAD.md](docs/GITHUB-UPLOAD.md) for every folder, filename and exact GitHub website click. The 2.14.0 update archive is an **overlay** for the existing repository: it does not rewrite `LICENSE` or unrelated files, and it does **not** automatically commit or push to GitHub.
 
 ## License and security
 

@@ -40,7 +40,7 @@ For a compiled distribution change `-File` to the `dist\scan-proxy\scripts\run.p
 
 Choose a script execution policy appropriate to the host. Some enterprises block local PowerShell scripts or enforce signed script requirements; do not bypass organization policy.
 
-## Updating to 2.13.1
+## Updating to 2.14.0
 
 1. Stop the scheduled task or interactive process. Check the process has exited.
 2. Back up private Excel rules, local environment settings, `analytics/_state/`, logs and current state under restricted storage.

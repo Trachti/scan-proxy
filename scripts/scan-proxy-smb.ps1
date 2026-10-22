@@ -11,7 +11,7 @@ param(
     [string]$IgnoredNetworks=''
 )
 
-$Version = '2.13.1'
+$Version = '2.14.0'
 # Changes:
 # 2026-09-18 | Trachti | Batched low-CPU OpenSnapshot and historical SMB resolution.
 # 2026-09-18 | Trachti | Added cautious Event 5140 share-level fallback after Event 5145.
