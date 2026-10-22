@@ -31,50 +31,56 @@ except ImportError:
     PdfReader = None
 
 
-VERSION = "2.13.0"
+VERSION = "2.13.1"
+# Changes:
+# 2026-09-18 | Trachti | Added restricted Event 5140 fallback after Event 5145 misses.
+# 2026-09-18 | Trachti | Optimized SMB open-file snapshot and pending batch resolution.
+# 2026-09-18 | Trachti | Reduced CPU and I/O with cached rules, SQLite and dirty reports.
+# 2026-10-22 | Trachti | Integrated English code and privacy-first public settings.
 
-# Maintainer: Trachti. No deployment-specific values are bundled.
 
+
+
+# Runtime settings are supplied by environment.local.ps1 (never committed).
 BASE = (
     Path(sys.executable).resolve().parent
     if getattr(sys, "frozen", False)
     else Path(__file__).resolve().parent.parent
 )
-ROOT = Path(os.environ.get("SCAN_PROXY_ROOT", r"C:\scan"))
-CONFIG_PATH = Path(os.environ.get(
-    "SCAN_PROXY_CONFIG", str(BASE / "config" / "scan-proxy-config.xlsx")
-))
-SMB_HELPER_PATH = Path(os.environ.get(
-    "SCAN_PROXY_SMB_HELPER", str(BASE / "scripts" / "scan-proxy-smb.ps1")
-))
-
-
-def environment_integer(name, default, minimum=1):
-    """Read an integer environment setting and validate its minimum."""
-    value = int(os.environ.get(name, str(default)))
-    if value < minimum:
-        raise ValueError(f"{name} must be at least {minimum}")
-    return value
-
-
-FILE_SCAN_INTERVAL_SECONDS = environment_integer("SCAN_PROXY_FILE_SCAN_INTERVAL_SECONDS", 5)
-REPORT_REFRESH_INTERVAL_SECONDS = environment_integer("SCAN_PROXY_REPORT_REFRESH_INTERVAL_SECONDS", 600)
-PENDING_SWEEP_INTERVAL_SECONDS = environment_integer("SCAN_PROXY_PENDING_SWEEP_INTERVAL_SECONDS", 60)
-PENDING_BATCH_SIZE = environment_integer("SCAN_PROXY_PENDING_BATCH_SIZE", 8)
-PENDING_MAX_HOURS = environment_integer("SCAN_PROXY_PENDING_MAX_HOURS", 48)
-SMB_EVENT_LOOKBACK_MINUTES = environment_integer("SCAN_PROXY_SMB_EVENT_LOOKBACK_MINUTES", 10)
-SMB_BATCH_TIMEOUT = environment_integer("SCAN_PROXY_SMB_BATCH_TIMEOUT_SECONDS", 20)
-SMB_SNAPSHOT_TIMEOUT = environment_integer("SCAN_PROXY_SMB_SNAPSHOT_TIMEOUT_SECONDS", 4)
-SMB_SNAPSHOT_TTL_SECONDS = environment_integer("SCAN_PROXY_SMB_SNAPSHOT_TTL_SECONDS", 8)
-MIN_AGE = environment_integer("SCAN_PROXY_MIN_FILE_AGE_SECONDS", 3)
+ROOT = Path(os.environ.get("SCAN_PROXY_ROOT", str(BASE / "incoming"))).expanduser()
+CONFIG_PATH = Path(
+    os.environ.get("SCAN_PROXY_CONFIG", str(BASE / "config" / "scan-proxy-config.xlsx"))
+).expanduser()
+SMB_HELPER_PATH = Path(
+    os.environ.get("SCAN_PROXY_SMB_HELPER", str(BASE / "scripts" / "scan-proxy-smb.ps1"))
+).expanduser()
 
 SMB_USER = os.environ.get("SCAN_PROXY_SMB_USER", "").strip()
+HOSTNAME_LOOKUPS_ENABLED = os.environ.get(
+    "SCAN_PROXY_ENABLE_HOSTNAME_LOOKUPS", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+LOCAL_SCAN_SHARE = os.environ.get("SCAN_PROXY_LOCAL_SHARE", "").strip().lower()
+
+
+
+FILE_SCAN_INTERVAL_SECONDS = int(os.environ.get("SCAN_PROXY_FILE_SCAN_INTERVAL_SECONDS", "5"))
+
+REPORT_REFRESH_INTERVAL_SECONDS = int(os.environ.get("SCAN_PROXY_REPORT_REFRESH_INTERVAL_SECONDS", "600"))
+PENDING_SWEEP_INTERVAL_SECONDS = int(os.environ.get("SCAN_PROXY_PENDING_SWEEP_INTERVAL_SECONDS", "60"))
+PENDING_BATCH_SIZE = int(os.environ.get("SCAN_PROXY_PENDING_BATCH_SIZE", "8"))
+PENDING_RETRY_DELAYS_SECONDS = (30, 120, 600, 3600, 21600, 43200)
+
+SMB_EVENT_LOOKBACK_MINUTES = int(os.environ.get("SCAN_PROXY_SMB_EVENT_LOOKBACK_MINUTES", "10"))
+
+SMB_SHARE_FALLBACK_MAX_AGE_SECONDS = int(os.environ.get("SCAN_PROXY_SMB_SHARE_FALLBACK_MAX_AGE_SECONDS", "30"))
+
 SMB_IGNORED_NETWORKS = tuple(
-    network.strip()
-    for network in os.environ.get("SCAN_PROXY_IGNORED_NETWORKS", "").replace(",", ";").split(";")
-    if network.strip()
+    value.strip()
+    for value in os.environ.get("SCAN_PROXY_IGNORED_NETWORKS", "").replace(",", ";").split(";")
+    if value.strip()
 )
-ENABLE_HOSTNAME_LOOKUP = os.environ.get("SCAN_PROXY_ENABLE_HOSTNAME_LOOKUP", "false").lower() in {"true", "1", "yes"}
+
+
 
 LOG_ROOT = BASE / "logs"
 SCANPROXY_LOG_DIR = LOG_ROOT / "scan-proxy"
@@ -88,42 +94,63 @@ WEEKLY = ANALYTICS / "weekly"
 MONTHLY = ANALYTICS / "monthly"
 YEARLY = ANALYTICS / "yearly"
 
+MIN_AGE = 3
+
 MAIN_LOOP_SLEEP_SECONDS = 1
-PENDING_RETRY_DELAYS_SECONDS = (30, 120, 600, 3600, 21600, 43200)
+
+SMB_BATCH_TIMEOUT = int(os.environ.get("SCAN_PROXY_SMB_BATCH_TIMEOUT_SECONDS", "20"))
+SMB_SNAPSHOT_TIMEOUT = int(os.environ.get("SCAN_PROXY_SMB_SNAPSHOT_TIMEOUT_SECONDS", "4"))
+SMB_SNAPSHOT_TTL_SECONDS = 8
+
+PENDING_MAX_HOURS = int(os.environ.get("SCAN_PROXY_PENDING_MAX_HOURS", "48"))
+
+SMB_OPEN_CACHE_SECONDS = 2
+SMB_RESOLVED_CACHE_SECONDS = 300
+SMB_MISS_CACHE_SECONDS = 30
 SMB_EXACT_HINT_SECONDS = 3600
+
 HOSTNAME_LOOKUP_TIMEOUT_SECONDS = 2
 HOSTNAME_SUCCESS_TTL_SECONDS = 86400
 HOSTNAME_FAILURE_TTL_SECONDS = 21600
 HOSTNAME_BATCH_SIZE = 4
+
 TARGET_DIR_CACHE_TTL_SECONDS = 600
+
 PERFORMANCE_LOG_INTERVAL_SECONDS = 300
-DAILY_RETENTION_DAYS = environment_integer("SCAN_PROXY_DAILY_RETENTION_DAYS", 90)
+
+DAILY_RETENTION_DAYS = int(os.environ.get("SCAN_PROXY_DAILY_RETENTION_DAYS", "90"))
+
 MOVE_RETRY_SECONDS = 5
+
 PENDING_CACHE_SECONDS = 5
-SMB_IGNORED_NETS = tuple(ipaddress.ip_network(value, strict=False) for value in SMB_IGNORED_NETWORKS)
+SMB_IGNORED_NETS = tuple(
+    ipaddress.ip_network(network, strict=False)
+    for network in SMB_IGNORED_NETWORKS
+)
 STOP = threading.Event()
 
-LOCAL_SCAN_SERVER_ALIASES = {
-    name.split(".", 1)[0].strip().lower()
-    for name in (
-        os.environ.get("COMPUTERNAME", ""),
-        socket.gethostname(),
-        *os.environ.get("SCAN_PROXY_LOCAL_SERVER_ALIASES", "").replace(",", ";").split(";"),
-    )
-    if name.strip()
-}
-LOCAL_SCAN_SHARE = os.environ.get("SCAN_PROXY_LOCAL_SHARE", ROOT.name).strip().lower()
+LOCAL_SCAN_SERVER_ALIASES = set()
+if os.environ.get("COMPUTERNAME"):
+    LOCAL_SCAN_SERVER_ALIASES.add(os.environ["COMPUTERNAME"].split(".", 1)[0].lower())
+LOCAL_SCAN_SERVER_ALIASES.add(socket.gethostname().split(".", 1)[0].lower())
+LOCAL_SCAN_SERVER_ALIASES.update(
+    alias.strip().split(".", 1)[0].lower()
+    for alias in os.environ.get("SCAN_PROXY_LOCAL_SERVER_ALIASES", "").replace(",", ";").split(";")
+    if alias.strip()
+)
+
 _TARGET_DIR_CACHE = {}
 
 @dataclass(frozen=True, slots=True)
 class Rule:
     row: int
-    identifier: str
+    code: str
     source_excel: str
     source: Path
     target: Path
     mode: str
     action: str
+    scanner: str
 
 @dataclass(slots=True)
 class RuleGroup:
@@ -147,7 +174,7 @@ def resolve_path(value):
 
 
 def localize_scan_source(path):
-    """Access a local SMB share through the local disk when possible."""
+    """Map only the explicitly configured local SMB share to ROOT; Excel paths stay unchanged."""
     if os.name != "nt":
         return path
     text = str(path).strip().replace("/", "\\")
@@ -156,25 +183,25 @@ def localize_scan_source(path):
         return path
     server, share, rest = match.groups()
     server = server.split(".", 1)[0].lower()
-    if server not in LOCAL_SCAN_SERVER_ALIASES or share.lower() != LOCAL_SCAN_SHARE:
+    if not LOCAL_SCAN_SHARE or server not in LOCAL_SCAN_SERVER_ALIASES or share.lower() != LOCAL_SCAN_SHARE:
         return path
     if not rest:
         return ROOT
     return ROOT.joinpath(*[part for part in rest.split("\\") if part])
 
 
-def normalize_path_key(path):
+def norm_path_key(path):
     return os.path.normcase(os.path.normpath(str(path)))
 
 
-def normalize_relative_path(value):
+def norm_relative(value):
     return str(value or "").strip().replace("/", "\\").strip("\\").lower()
 
 
-def ensure_destination_directory(path):
-    """Cache directory creation to avoid unnecessary remote filesystem calls."""
+def ensure_target_dir(path):
+    """Avoid repeated mkdir calls for the same destination directory."""
     now = time.monotonic()
-    key = normalize_path_key(path)
+    key = norm_path_key(path)
     if _TARGET_DIR_CACHE.get(key, 0.0) > now:
         return
     path.mkdir(parents=True, exist_ok=True)
@@ -185,9 +212,10 @@ def ensure_destination_directory(path):
 def is_enabled(value):
     return str(value).strip().lower() in {
         "true",
-        "1",
-        "yes",
         "on",
+        "1",
+        "enabled",
+        "yes",
         "x",
     }
 
@@ -215,13 +243,13 @@ def normalize_ip(value):
         return ""
 
 def pending_retry_delay(attempts):
-    """Return the backoff delay for a pending SMB attribution."""
+    """Return the backoff interval for a scanner with unresolved client IP."""
     index = min(max(int(attempts), 0), len(PENDING_RETRY_DELAYS_SECONDS) - 1)
     return PENDING_RETRY_DELAYS_SECONDS[index]
 
 
 def reverse_lookup(ip):
-    """Look up a scanner hostname when explicitly enabled."""
+    """Resolve an IP via nslookup, with a socket-based fallback."""
     client = normalize_ip(ip)
     if not client:
         return "", "None"
@@ -243,7 +271,7 @@ def reverse_lookup(ip):
             )
             text = "\n".join((result.stdout or "", result.stderr or ""))
             matches = re.findall(
-                r"(?im)^\s*name\s*[:=]\s*(\S.*?)\s*$",
+                r"(?im)^\s*(?:name|name)\s*[:=]\s*(\S.*?)\s*$",
                 text,
             )
             for value in matches:
@@ -263,10 +291,10 @@ def reverse_lookup(ip):
     return "", "None"
 
 
-def utc_now_iso():
+def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-def parse_utc_iso(value):
+def parse_utc(value):
     try:
         return datetime.fromisoformat(
             str(value).replace("Z", "+00:00")
@@ -275,7 +303,7 @@ def parse_utc_iso(value):
         return None
 
 
-def format_megabytes(size):
+def mb(size):
     value = Decimal(int(size or 0)) / Decimal(1048576)
     rounded = value.quantize(
         Decimal("0.01"),
@@ -284,7 +312,7 @@ def format_megabytes(size):
     return f"{rounded:.2f}"
 
 
-def get_page_count(file, log):
+def pages(file, log):
     if file.suffix.lower() != ".pdf":
         return 1
     try:
@@ -300,7 +328,10 @@ def get_page_count(file, log):
             len(re.findall(rb"/Type\s*/Page\b", content)),
         )
     except Exception:
-        log.warning("ANALYTICS WARNING | PDF page count could not be read")
+        log.warning(
+            "ANALYTICS WARNING | "
+            "Could not determine PDF page count",
+        )
         return 1
 
 
@@ -355,7 +386,7 @@ def get_logger(name, folder):
 
 def get_logs():
     scanproxy_log = get_logger(
-        "scan-proxy",
+        "scanproxy",
         SCANPROXY_LOG_DIR,
     )
     analytics_log = get_logger(
@@ -363,6 +394,8 @@ def get_logs():
         ANALYTICS_LOG_DIR,
     )
     return scanproxy_log, analytics_log
+
+
 
 
 def load_rules():
@@ -404,14 +437,14 @@ def load_rules():
                 break
         else:
             raise ValueError(
-                "No worksheet with Identifier, Source, Destination, Mode, "
-                "and Enabled/Status columns was found"
+                "No worksheet contains Identifier, Source, Destination, Mode "
+                "and Enabled/Status columns"
             )
         columns["enabled"] = columns.get(
             "enabled",
             columns.get("status"),
         )
-        def value_from_row(row, name, default=None):
+        def val(row, name, default=None):
             index = columns.get(name)
             if index is not None and index < len(row):
                 return row[index]
@@ -429,12 +462,13 @@ def load_rules():
             rules.append(
                 (
                     row_number,
-                    value_from_row(row, "identifier"),
-                    value_from_row(row, "source"),
-                    value_from_row(row, "destination"),
-                    value_from_row(row, "mode"),
-                    value_from_row(row, "enabled"),
-                    value_from_row(row, "action", "move") or "move",
+                    val(row, "identifier"),
+                    val(row, "source"),
+                    val(row, "destination"),
+                    val(row, "mode"),
+                    val(row, "enabled"),
+                    val(row, "action", "move") or "move",
+                    val(row, "scanner"),
                 )
             )
         return worksheet.title, rules
@@ -442,14 +476,15 @@ def load_rules():
         workbook.close()
 
 
+
 def compile_rules(raw_rules, log):
-    """Validate and compile routing rules on workbook reload."""
+    """Validate and group Excel rules once when the workbook is loaded."""
     groups = {}
     active_count = 0
     mapped_sources = set()
     seen_rules = {}
 
-    for row, identifier, source, target, mode, enabled, action in raw_rules:
+    for row, code, source, target, mode, enabled, action, scanner in raw_rules:
         if not is_enabled(enabled):
             continue
         if not source or not target:
@@ -460,17 +495,21 @@ def compile_rules(raw_rules, log):
         src_excel_path = resolve_path(source_excel)
         src = localize_scan_source(src_excel_path)
         dst = resolve_path(target)
+        # The administrator controls the workbook; validate malformed paths early.
+        if str(src).strip() == str(dst).strip():
+            log.error("RULE ERROR | Source equals destination | Row=%s", row)
+            continue
         mode = str(mode or "").strip().lower()
         action = str(action or "move").strip().lower()
-        identifier_text = str(identifier or "").strip()
+        code_text = str(code or "").strip()
 
         if action not in {"move", "copy"}:
             log.error("RULE ERROR | Row=%s | Invalid action=%s", row, action)
             continue
         if mode not in {"identifier", "subfolder", "subfolders"}:
-            log.error("RULE ERROR | Row=%s | Invalid mode=%s", row, mode)
+            log.error("RULE ERROR | Row=%s | Mode=%s", row, mode)
             continue
-        if mode == "identifier" and not identifier_text:
+        if mode == "identifier" and not code_text:
             log.error("RULE ERROR | Row=%s | Identifier missing", row)
             continue
 
@@ -484,7 +523,7 @@ def compile_rules(raw_rules, log):
                 pass
 
         signature = (
-            identifier_text.lower(), normalize_path_key(src), normalize_path_key(dst),
+            code_text.lower(), norm_path_key(src), norm_path_key(dst),
             mode, action,
         )
         if signature in seen_rules:
@@ -497,30 +536,31 @@ def compile_rules(raw_rules, log):
 
         rule = Rule(
             row=row,
-            identifier=identifier_text,
+            code=code_text,
             source_excel=source_excel,
             source=src,
             target=dst,
             mode=mode,
             action=action,
+            scanner=str(scanner or "").strip(),
         )
-        key = normalize_path_key(src)
+        key = norm_path_key(src)
         group = groups.setdefault(key, RuleGroup(src, source_excel))
         if mode == "identifier":
-            group.identifiers.setdefault(identifier_text.lower(), []).append(rule)
+            group.identifiers.setdefault(code_text.lower(), []).append(rule)
         else:
             group.subfolders.append(rule)
         active_count += 1
 
-        if normalize_path_key(src) != normalize_path_key(src_excel_path) and key not in mapped_sources:
+        if norm_path_key(src) != norm_path_key(src_excel_path) and key not in mapped_sources:
             mapped_sources.add(key)
-            log.info("LOCAL SOURCE OPTIMIZED | Rule=%s", row)
+            log.info("LOCAL SOURCE OPTIMIZED")
 
     return list(groups.values()), active_count
 
 
 def scan_source(root, recursive):
-    """Scan a source tree once and retain file metadata."""
+    """Walk a source directory with os.scandir and cache file metadata."""
     files = []
     stack = [root]
     while stack:
@@ -539,8 +579,10 @@ def scan_source(root, recursive):
     return files
 
 
+
+
 class SmbResolver:
-    """Resolve SMB clients using one live snapshot and batched historical events."""
+    """Resolve SMB clients using a low-cost open-file snapshot and a historical batch."""
 
     def __init__(self, log):
         self.log = log
@@ -551,7 +593,7 @@ class SmbResolver:
         self.snapshot_wall_time = 0.0
 
     @staticmethod
-    def empty(reason="No unambiguous SMB client IP could be resolved"):
+    def empty(reason="No unambiguous SMB client IP attribution"):
         return {
             "client": "",
             "resolved": False,
@@ -563,7 +605,7 @@ class SmbResolver:
         }
 
     def refresh_open_snapshot(self, force=False):
-        """Fetch a shared SMB open-file snapshot for an entire scan cycle."""
+        """Run at most one Get-SmbOpenFile process for multiple files."""
         started = time.perf_counter()
         now = time.monotonic()
         if not force and self.snapshot_until > now:
@@ -572,7 +614,7 @@ class SmbResolver:
         self.snapshot_relative = {}
         self.snapshot_until = now + SMB_SNAPSHOT_TTL_SECONDS
         self.snapshot_wall_time = time.time()
-        if os.name != "nt" or not SMB_HELPER_PATH.is_file() or not SMB_USER:
+        if not SMB_USER or os.name != "nt" or not SMB_HELPER_PATH.is_file():
             return 0.0
 
         command = [
@@ -605,9 +647,9 @@ class SmbResolver:
                 if not client:
                     continue
                 file_path = item.get("Path")
-                relative = normalize_relative_path(item.get("RelativePath"))
+                relative = norm_relative(item.get("RelativePath"))
                 if file_path:
-                    self.snapshot_paths.setdefault(normalize_path_key(file_path), set()).add(client)
+                    self.snapshot_paths.setdefault(norm_path_key(file_path), set()).add(client)
                 if relative:
                     self.snapshot_relative.setdefault(relative, set()).add(client)
         except Exception as exc:
@@ -615,9 +657,9 @@ class SmbResolver:
         return (time.perf_counter() - started) * 1000.0
 
     def resolve(self, file, relative="", mtime="", reference=""):
-        """Match open files in memory without launching one process per file."""
-        path_key = normalize_path_key(file)
-        rel_key = normalize_relative_path(relative)
+        """Match only the in-memory SMB snapshot; never launch one process per file."""
+        path_key = norm_path_key(file)
+        rel_key = norm_relative(relative)
         now = time.monotonic()
 
         clients = self.snapshot_paths.get(path_key)
@@ -630,7 +672,7 @@ class SmbResolver:
                     "client": client,
                     "resolved": True,
                     "source": "Get-SmbOpenFile-Snapshot",
-                    "reason": "Exact open SMB file from shared snapshot",
+                    "reason": "Exact SMB open file found in snapshot",
                     "record_id": 0,
                     "is_open": True,
                     "confidence": "ExactOpenFile",
@@ -638,11 +680,11 @@ class SmbResolver:
                 cached = dict(result)
                 cached["is_open"] = False
                 cached["source"] = "Get-SmbOpenFile-Cache"
-                cached["reason"] = "Previously matched open SMB file"
+                cached["reason"] = "Previously observed exact SMB open file"
                 cached["confidence"] = "ExactOpenFileCached"
                 self.exact_clients[(path_key, mtime)] = (cached, now + SMB_EXACT_HINT_SECONDS)
                 return result
-            result = self.empty("Ambiguous open SMB file in snapshot")
+            result = self.empty("Ambiguous SMB open-file snapshot")
             result["is_open"] = True
             result["confidence"] = "Ambiguous"
             return result
@@ -655,12 +697,12 @@ class SmbResolver:
         return self.empty()
 
     def resolve_batch(self, rows):
-        """Resolve pending files using a single PowerShell batch invocation."""
+        """Resolve historical pending files with one PowerShell process per batch."""
         rows = list(rows)
         if not rows:
             return {}
         empty = self.empty()
-        if os.name != "nt" or not SMB_HELPER_PATH.is_file() or not SMB_USER:
+        if not SMB_USER or os.name != "nt" or not SMB_HELPER_PATH.is_file():
             return {str(row["id"]): dict(empty) for row in rows}
 
         payload = [
@@ -668,7 +710,7 @@ class SmbResolver:
                 "Id": str(row["id"]),
                 "FilePath": str(row["original_path"]),
                 "RelativePath": str(row["relative_path"] or ""),
-                "ReferenceTimeUtc": str(row["file_mtime_utc"] or row["completed_at_utc"] or utc_now_iso()),
+                "ReferenceTimeUtc": str(row["file_mtime_utc"] or row["completed_at_utc"] or utc_now()),
             }
             for row in rows
         ]
@@ -677,6 +719,7 @@ class SmbResolver:
             "-ExecutionPolicy", "Bypass", "-File", str(SMB_HELPER_PATH),
             "-Mode", "ResolveBatch", "-UserName", SMB_USER,
             "-LookbackMinutes", str(SMB_EVENT_LOOKBACK_MINUTES),
+            "-SessionFallbackMaxAgeSeconds", str(SMB_SHARE_FALLBACK_MAX_AGE_SECONDS),
             "-IgnoredNetworks", ";".join(SMB_IGNORED_NETWORKS),
         ]
         try:
@@ -718,15 +761,17 @@ class SmbResolver:
                 results.setdefault(str(row["id"]), dict(empty))
             return results
         except Exception as exc:
-            self.log.warning("SMB BATCH ERROR | Count=%s | ErrorType=%s", len(rows), type(exc).__name__)
-            failed = self.empty("SMB batch lookup failed")
+            self.log.warning("SMB BATCH ERROR | Files=%s | ErrorType=%s", len(rows), type(exc).__name__)
+            failed = self.empty(f"SMB batch failed: {exc}")
             return {str(row["id"]): dict(failed) for row in rows}
 
     def forget(self, file):
-        path_key = normalize_path_key(file)
+        path_key = norm_path_key(file)
         for cache_key in list(self.exact_clients):
             if cache_key[0] == path_key:
                 self.exact_clients.pop(cache_key, None)
+
+
 
 
 class Analytics:
@@ -743,7 +788,7 @@ class Analytics:
         self._last_maintenance_day = None
 
     def connect(self):
-        """Reuse one SQLite connection for the serial routing process."""
+        """Reuse one SQLite connection for this single-threaded service."""
         if self.db is None:
             self.db = sqlite3.connect(DB, timeout=10)
             self.db.row_factory = sqlite3.Row
@@ -905,7 +950,7 @@ class Analytics:
     ):
         
 
-        now = utc_now_iso()
+        now = utc_now()
         move_id = uuid.uuid4().hex
         source_norm = os.path.normcase(
             os.path.normpath(
@@ -954,16 +999,17 @@ class Analytics:
         
 
         done = (
-            parse_utc_iso(completed)
+            parse_utc(completed)
             or datetime.now(timezone.utc)
         )
         local = done.astimezone()
-        now = utc_now_iso()
+        now = utc_now()
 
         client = normalize_ip(
             (resolution or {}).get("client")
         )
-        state = ("resolved" if client else "pending" if SMB_USER else "unresolved")
+        # Avoid retaining document paths when SMB attribution is disabled.
+        state = "resolved" if client else ("pending" if SMB_USER else "unresolved")
         deadline = (
             datetime.now(timezone.utc)
             + timedelta(hours=PENDING_MAX_HOURS)
@@ -978,10 +1024,10 @@ class Analytics:
             local.date().isoformat(),
             str(source) if state == "pending" else "",
             str(relative) if state == "pending" else "",
-            str(target) if state == "pending" else "",
-            str(label or ""),
+            "",
+            "",
             mtime,
-            int(page_count) if page_count is not None else get_page_count(target, self.log),
+            int(page_count) if page_count is not None else pages(target, self.log),
             int(size_bytes) if size_bytes is not None else target.stat().st_size,
             client or None,
             str(
@@ -1019,11 +1065,7 @@ class Analytics:
                 values,
             )
         self.mark_dirty(local.date().isoformat())
-        self.log.info(
-            "ANALYTICS | State=%s | Pages=%s",
-            state,
-            page_count if page_count is not None else "unknown",
-        )
+        self.log.info("ANALYTICS | State=%s | Pages=%s", state, values[9])
 
 
     def retry_moves(self):
@@ -1083,7 +1125,7 @@ class Analytics:
                             WHERE id = ?
                             """,
                             (
-                                utc_now_iso(),
+                                utc_now(),
                                 row["id"],
                             ),
                         )
@@ -1122,7 +1164,7 @@ class Analytics:
 
 
     def resolve_pending(self, smb):
-        """Process due pending SMB clients in a resource-efficient batch."""
+        """Resolve due pending IPs in a single low-CPU batch."""
         now = time.time()
         now_utc = datetime.now(timezone.utc)
         with self.connect() as db:
@@ -1140,45 +1182,43 @@ class Analytics:
 
         expired, active_rows = [], []
         for row in rows:
-            deadline = parse_utc_iso(row["resolve_deadline_utc"])
+            deadline = parse_utc(row["resolve_deadline_utc"])
             (expired if deadline and deadline <= now_utc else active_rows).append(row)
 
         changed = 0
         if expired:
-            stamp = utc_now_iso()
+            stamp = utc_now()
             with self.connect() as db:
                 db.executemany(
-                    """UPDATE scans SET resolution_state='unresolved', original_path='',
-                        relative_path='', completed_path='', updated_at_utc=? WHERE id=?""",
+                    """UPDATE scans SET resolution_state='unresolved',
+                        original_path='', relative_path='', completed_path='', routing_label='',
+                        updated_at_utc=? WHERE id=?""",
                     [(stamp, row["id"]) for row in expired],
                 )
             for row in expired:
                 self.mark_dirty(row["completed_date"])
                 changed += 1
-                self.log.warning(
-                    "SMB ATTRIBUTION EXPIRED | Attempts=%s",
-                    row["resolve_attempts"],
-                )
+                self.log.warning("SMB ATTRIBUTION EXPIRED | Attempts=%s", row["resolve_attempts"])
 
         if not active_rows:
             return changed
 
         results = smb.resolve_batch(active_rows)
         resolved_logs = []
-        stamp = utc_now_iso()
+        stamp = utc_now()
         retry_now = time.time()
         with self.connect() as db:
             for row in active_rows:
                 result = results.get(str(row["id"]), {})
                 client = normalize_ip(result.get("client"))
                 attempts = int(row["resolve_attempts"] or 0) + 1
-                reason = str(result.get("reason") or "No unambiguous SMB client IP could be resolved")[:1000]
+                reason = str(result.get("reason") or "No unambiguous SMB client IP attribution")[:1000]
                 if client:
                     db.execute(
                         """
                         UPDATE scans SET scanner_ip=?, resolution_source=?, resolution_reason=?,
                             resolution_confidence=?, resolution_record_id=?, resolution_state='resolved',
-                            original_path='', relative_path='', completed_path='',
+                            original_path='', relative_path='', completed_path='', routing_label='',
                             resolve_attempts=?, updated_at_utc=? WHERE id=?
                         """,
                         (client, str(result.get("source") or "None"), reason,
@@ -1197,12 +1237,12 @@ class Analytics:
                         (attempts, retry_now + pending_retry_delay(attempts), reason, stamp, row["id"]),
                     )
         for source in resolved_logs:
-            self.log.info("SMB ATTRIBUTION RESOLVED | Source=%s", source)
+            self.log.info("SMB RESOLVED | Evidence=%s", source)
         return changed
 
 
     def refresh_hostnames(self, ips):
-        if not ENABLE_HOSTNAME_LOOKUP:
+        if not HOSTNAME_LOOKUPS_ENABLED:
             return set()
         candidates = sorted({normalize_ip(ip) for ip in ips if normalize_ip(ip)})
         changed_ips = set()
@@ -1255,7 +1295,7 @@ class Analytics:
                         ip,
                         effective_name,
                         source if hostname else (previous["source"] if previous else "None"),
-                        utc_now_iso(),
+                        utc_now(),
                         now + ttl,
                         failures,
                     ),
@@ -1266,7 +1306,7 @@ class Analytics:
         return changed_ips
 
     def hostnames(self):
-        if not ENABLE_HOSTNAME_LOOKUP:
+        if not HOSTNAME_LOOKUPS_ENABLED:
             return {}
         with self.connect() as db:
             rows = db.execute(
@@ -1275,7 +1315,7 @@ class Analytics:
         return {row["scanner_ip"]: row["hostname"] for row in rows}
 
     def quality_data(self):
-        """Return daily totals for resolved and unresolved attribution."""
+        """Return daily counts of resolved, pending and unresolved scan records."""
         with self.connect() as db:
             rows = db.execute(
                 """
@@ -1297,8 +1337,6 @@ class Analytics:
         return [dict(row) for row in rows]
 
     def data(self):
-        if not SMB_USER:
-            return []
         with self.connect() as db:
             rows = db.execute(
                 """
@@ -1328,7 +1366,7 @@ class Analytics:
         ]
     @staticmethod
     def write_csv(path, fields, rows):
-        """Atomically update a CSV only when its content changes."""
+        """Write a CSV atomically only when its content has changed."""
         path.parent.mkdir(parents=True, exist_ok=True)
         buffer = io.StringIO(newline="")
         writer = csv.DictWriter(
@@ -1357,7 +1395,7 @@ class Analytics:
 
     @staticmethod
     def write_text(path, text):
-        """Atomically update a text file only when its content changes."""
+        """Atomically write changed text while avoiding unnecessary I/O."""
         payload = text.encode("utf-8")
         try:
             if path.read_bytes() == payload:
@@ -1377,7 +1415,7 @@ class Analytics:
         latest,
         interval_label,
     ):
-        """Generate a standalone HTML report with embedded data."""
+        """Build standalone local analytics HTML with embedded data."""
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1455,6 +1493,7 @@ class Analytics:
             border-radius: 7px;
             background: white;
         }}
+        #q {{ min-width: 220px; }}
         small, .muted {{ color: #667085; }}
         .warn {{ color: #9a6700; }}
         .bad {{ color: #b42318; }}
@@ -1470,8 +1509,8 @@ class Analytics:
             <div>
                 <h1>Scan Proxy Analytics</h1>
                 <small>
-                    Scanner attribution uses unambiguous SMB client IPs &middot;
-                    Hostname lookup is optional &middot;
+                    Scanner attribution requires an unambiguous SMB client IP &middot;
+                    Reverse DNS via nslookup (optional) &middot;
                     Scan Proxy {escape(VERSION)}
                 </small>
             </div>
@@ -1480,8 +1519,8 @@ class Analytics:
 
         <div class="ctrl">
             <label>
-                View<br>
-                <select id="periodSelect">
+                Period<br>
+                <select id="m">
                     <option value="day">Day</option>
                     <option value="week">Week</option>
                     <option value="month">Month</option>
@@ -1490,11 +1529,11 @@ class Analytics:
             </label>
             <label>
                 Date<br>
-                <input id="dateInput" type="date" value="{latest}">
+                <input id="d" type="date" value="{latest}">
             </label>
             <label>
-                Filter scanner IP / hostname<br>
-                <input id="searchInput" type="search" placeholder="e.g. scanner IP or hostname">
+                Filter by scanner IP / hostname<br>
+                <input id="q" type="search" placeholder="e.g. 192.0.2.10 or scanner-01">
             </label>
             <b id="r"></b>
         </div>
@@ -1522,127 +1561,128 @@ class Analytics:
                     <th>Last scan</th>
                 </tr>
             </thead>
-            <tbody id="scannerTable"></tbody>
+            <tbody id="t"></tbody>
         </table>
 
         <p class="muted">
-            The table includes only completed scans with an unambiguous scanner IP.
-            Pending and unresolved attributions are reported separately; identities are never guessed.
+            The table contains only successfully transferred files with unambiguously identified
+            scanner IPs. Pending and permanently unresolved attributions are shown separately
+            and are never assigned to a guessed client or routing identifier.
         </p>
     </main>
 
     <script>
-        const payload = {embedded};
-        const resolvedRows = payload.data;
-        const qualityRows = payload.quality;
-        const periodSelect = document.getElementById('periodSelect');
-        const dateInput = document.getElementById('dateInput');
-        const searchInput = document.getElementById('searchInput');
-        const scannerTable = document.getElementById('scannerTable');
-        const escapeHtml = value => String(value).replace(/[&<>"']/g, ch =>
-            ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}})[ch]
-        );
-        const padNumber = n => String(n).padStart(2, '0');
-        const formatIsoDate = x => `${{x.getFullYear()}}-${{padNumber(x.getMonth() + 1)}}-${{padNumber(x.getDate())}}`;
-        const parseIsoDate = s => {{
+        const P = {embedded};
+        const D = P.data;
+        const Q = P.quality;
+        const m = document.getElementById('m');
+        const d = document.getElementById('d');
+        const q = document.getElementById('q');
+        const t = document.getElementById('t');
+        const pad = n => String(n).padStart(2, '0');
+        const safe = value => String(value ?? '').replace(/[&<>"']/g, ch => ({{
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }}[ch]));
+        const iso = x => `${{x.getFullYear()}}-${{pad(x.getMonth() + 1)}}-${{pad(x.getDate())}}`;
+        const pd = s => {{
             const a = s.split('-').map(Number);
             return new Date(a[0], a[1] - 1, a[2]);
         }};
-        const formatDisplayDate = s => {{
-            const x = parseIsoDate(s);
-            return x.toLocaleDateString('en-US');
+        const fd = s => {{
+            const x = pd(s);
+            return `${{pad(x.getDate())}}.${{pad(x.getMonth() + 1)}}.${{x.getFullYear()}}`;
         }};
-        const formatDateTime = s => s ? new Date(s).toLocaleString(
-            'en-US', {{dateStyle: 'short', timeStyle: 'short'}}
+        const dt = s => s ? new Date(s).toLocaleString(
+            'en-GB', {{dateStyle: 'short', timeStyle: 'short'}}
         ) : '-';
-        const formatNumber = x => Number(x || 0).toLocaleString('en-US');
-        const formatMegabytes = x => (Number(x || 0) / 1048576).toLocaleString(
-            'en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}}
+        const num = x => Number(x || 0).toLocaleString('en-GB');
+        const mb = x => (Number(x || 0) / 1048576).toLocaleString(
+            'en-GB', {{minimumFractionDigits: 2, maximumFractionDigits: 2}}
         );
 
-        function getDateRange() {{
-            const x = parseIsoDate(dateInput.value);
+        function range() {{
+            const x = pd(d.value);
             let a = new Date(x);
             let z = new Date(x);
-            if (periodSelect.value === 'week') {{
+            if (m.value === 'week') {{
                 a.setDate(x.getDate() - ((x.getDay() + 6) % 7));
                 z = new Date(a);
                 z.setDate(a.getDate() + 6);
             }}
-            if (periodSelect.value === 'month') {{
+            if (m.value === 'month') {{
                 a = new Date(x.getFullYear(), x.getMonth(), 1);
                 z = new Date(x.getFullYear(), x.getMonth() + 1, 0);
             }}
-            if (periodSelect.value === 'year') {{
+            if (m.value === 'year') {{
                 a = new Date(x.getFullYear(), 0, 1);
                 z = new Date(x.getFullYear(), 11, 31);
             }}
-            return [formatIsoDate(a), formatIsoDate(z)];
+            return [iso(a), iso(z)];
         }}
 
-        function renderReport() {{
-            const [startDate, endDate] = getDateRange();
-            const rows = resolvedRows.filter(record => record.date >= startDate && record.date <= endDate);
-            const quality = qualityRows.filter(record => record.date >= startDate && record.date <= endDate);
+        function render() {{
+            const [A, Z] = range();
+            const rows = D.filter(v => v.date >= A && v.date <= Z);
+            const quality = Q.filter(v => v.date >= A && v.date <= Z);
             const scanners = new Map();
             let files = 0, pages = 0, bytes = 0, pending = 0, unresolved = 0;
             let first = '', last = '';
 
-            for (const record of quality) {{
-                files += record.total;
-                pages += record.pages;
-                bytes += record.bytes;
-                pending += record.pending;
-                unresolved += record.unresolved;
-                first = !first || (record.first && record.first < first) ? record.first : first;
-                last = !last || (record.last && record.last > last) ? record.last : last;
+            for (const v of quality) {{
+                files += v.total;
+                pages += v.pages;
+                bytes += v.bytes;
+                pending += v.pending;
+                unresolved += v.unresolved;
+                first = !first || (v.first && v.first < first) ? v.first : first;
+                last = !last || (v.last && v.last > last) ? v.last : last;
             }}
 
-            for (const record of rows) {{
-                const scannerStats = scanners.get(record.scanner) || {{
-                    hostname: record.hostname || '', files: 0, pages: 0, bytes: 0, lastScan: ''
+            for (const v of rows) {{
+                const o = scanners.get(v.scanner) || {{
+                    hostname: v.hostname || '', f: 0, p: 0, b: 0, l: ''
                 }};
-                if (!scannerStats.hostname && record.hostname) scannerStats.hostname = record.hostname;
-                scannerStats.files += record.files;
-                scannerStats.pages += record.pages;
-                scannerStats.bytes += record.bytes;
-                scannerStats.lastScan = !scannerStats.lastScan || record.last > scannerStats.lastScan ? record.last : scannerStats.lastScan;
-                scanners.set(record.scanner, scannerStats);
+                if (!o.hostname && v.hostname) o.hostname = v.hostname;
+                o.f += v.files;
+                o.p += v.pages;
+                o.b += v.bytes;
+                o.l = !o.l || v.last > o.l ? v.last : o.l;
+                scanners.set(v.scanner, o);
             }}
 
-            document.getElementById('r').textContent = `${{formatDisplayDate(startDate)}} to ${{formatDisplayDate(endDate)}}`;
-            document.getElementById('c').textContent = formatNumber(scanners.size);
-            document.getElementById('f').textContent = formatNumber(files);
-            document.getElementById('p').textContent = formatNumber(pages);
-            document.getElementById('b').textContent = formatMegabytes(bytes) + ' MB';
-            document.getElementById('pn').textContent = formatNumber(pending);
-            document.getElementById('u').textContent = formatNumber(unresolved);
-            document.getElementById('e').textContent = formatDateTime(first);
-            document.getElementById('l').textContent = formatDateTime(last);
+            document.getElementById('r').textContent = `${{fd(A)}} to ${{fd(Z)}}`;
+            document.getElementById('c').textContent = num(scanners.size);
+            document.getElementById('f').textContent = num(files);
+            document.getElementById('p').textContent = num(pages);
+            document.getElementById('b').textContent = mb(bytes) + ' MB';
+            document.getElementById('pn').textContent = num(pending);
+            document.getElementById('u').textContent = num(unresolved);
+            document.getElementById('e').textContent = dt(first);
+            document.getElementById('l').textContent = dt(last);
 
-            const filter = searchInput.value.trim().toLowerCase();
+            const filter = q.value.trim().toLowerCase();
             const visible = [...scanners]
-                .filter(([ip, scannerStats]) => !filter || ip.toLowerCase().includes(filter) ||
-                    (scannerStats.hostname || '').toLowerCase().includes(filter))
+                .filter(([ip, o]) => !filter || ip.toLowerCase().includes(filter) ||
+                    (o.hostname || '').toLowerCase().includes(filter))
                 .sort((a, b) => a[0].localeCompare(b[0], undefined, {{numeric: true}}));
 
-            scannerTable.innerHTML = visible.map(([ip, scannerStats]) => `
+            t.innerHTML = visible.map(([ip, o]) => `
                 <tr>
-                    <td>${{escapeHtml(ip)}}</td>
-                    <td>${{scannerStats.hostname ? escapeHtml(scannerStats.hostname) : '<span class="muted">-</span>'}}</td>
-                    <td class="n">${{formatNumber(scannerStats.files)}}</td>
-                    <td class="n">${{formatNumber(scannerStats.pages)}}</td>
-                    <td class="n">${{scannerStats.files ? (scannerStats.pages / scannerStats.files).toLocaleString('en-US', {{maximumFractionDigits: 1}}) : '-'}}</td>
-                    <td class="n">${{formatMegabytes(scannerStats.bytes)}}</td>
-                    <td>${{formatDateTime(scannerStats.lastScan)}}</td>
+                    <td>${{safe(ip)}}</td>
+                    <td>${{o.hostname ? safe(o.hostname) : '<span class="muted">-</span>'}}</td>
+                    <td class="n">${{num(o.f)}}</td>
+                    <td class="n">${{num(o.p)}}</td>
+                    <td class="n">${{o.f ? (o.p / o.f).toLocaleString('en-GB', {{maximumFractionDigits: 1}}) : '-'}}</td>
+                    <td class="n">${{mb(o.b)}}</td>
+                    <td>${{dt(o.l)}}</td>
                 </tr>
             `).join('') || '<tr><td colspan="7">No data</td></tr>';
         }}
 
-        periodSelect.onchange = renderReport;
-        dateInput.onchange = renderReport;
-        searchInput.oninput = renderReport;
-        renderReport();
+        m.onchange = render;
+        d.onchange = render;
+        q.oninput = render;
+        render();
     </script>
 </body>
 </html>
@@ -1650,7 +1690,7 @@ class Analytics:
 
 
     def refresh_reports(self, force=False):
-        """Refresh affected report periods while keeping the HTML history complete."""
+        """Refresh only affected CSV periods; HTML keeps the complete history."""
         today = date.today()
         maintenance_due = self._last_maintenance_day != today
         if not force and not self._reports_dirty and not maintenance_due:
@@ -1734,19 +1774,19 @@ class Analytics:
                 continue
             rows = [
                 {
-                    "Date": completed_date.isoformat(),
-                    "Scanner": row["scanner_ip"],
+                    "Date": completed_date.strftime("%Y-%m-%d"),
+                    "Scanner IP": row["scanner_ip"],
                     "Hostname": hostnames.get(row["scanner_ip"], ""),
                     "Files": row["files"],
                     "Pages": row["pages"],
-                    "Data_MB": format_megabytes(row["bytes"]),
+                    "Data_MB": mb(row["bytes"]),
                     "Last_Scan": str(row["last_scan"])[11:16],
                 }
                 for row in same_day
             ]
             changed += self.write_csv(
-                DAILY / f"{completed_date.isoformat()}-scan-proxy.csv",
-                ("Date", "Scanner", "Hostname", "Files", "Pages", "Data_MB", "Last_Scan"),
+                DAILY / f"{completed_date.strftime('%Y-%m-%d')}-scan-proxy.csv",
+                ("Date", "Scanner IP", "Hostname", "Files", "Pages", "Data_MB", "Last_Scan"),
                 rows,
             )
 
@@ -1754,31 +1794,31 @@ class Analytics:
             for (name, start, finish), scanners in groups[report_type].items():
                 rows = [
                     {
-                        "From": start.isoformat(),
-                        "To": finish.isoformat(),
-                        "Scanner": scanner,
+                        "From": start.strftime("%Y-%m-%d"),
+                        "To": finish.strftime("%Y-%m-%d"),
+                        "Scanner IP": scanner,
                         "Hostname": hostnames.get(scanner, ""),
                         "Files": values["files"],
                         "Pages": values["pages"],
-                        "Data_MB": format_megabytes(values["bytes"]),
+                        "Data_MB": mb(values["bytes"]),
                         "Last_Scan": str(values["last"])[0:16].replace("T", " "),
                     }
                     for scanner, values in sorted(scanners.items())
                 ]
                 changed += self.write_csv(
                     folder / name,
-                    ("From", "To", "Scanner", "Hostname", "Files", "Pages", "Data_MB", "Last_Scan"),
+                    ("From", "To", "Scanner IP", "Hostname", "Files", "Pages", "Data_MB", "Last_Scan"),
                     rows,
                 )
 
         if full_refresh:
             for report_file in DAILY.glob("*-scan-proxy.csv"):
                 try:
-                    report_date = date.fromisoformat(report_file.name[:10])
+                    report_date = datetime.strptime(report_file.name[:10], "%Y-%m-%d").date()
                     if report_date < cutoff:
                         report_file.unlink()
                         changed += 1
-                        self.log.info("CLEANUP | Old daily report removed")
+                        self.log.info("CLEANUP | Deleted expired daily report")
                 except ValueError:
                     pass
 
@@ -1793,7 +1833,10 @@ class Analytics:
                 if report_file.exists():
                     report_file.unlink()
                     changed += 1
-                    self.log.info("CLEANUP | Incomplete period report removed")
+                    self.log.info(
+                        "CLEANUP | Removed incomplete period report | File=%s",
+                        report_file,
+                    )
 
         embedded_data = [
             {
@@ -1822,15 +1865,13 @@ class Analytics:
             }
             for row in quality
         ]
-        # Escape HTML-sensitive characters before embedding JSON in a script element.
         embedded = json.dumps(
             {"data": embedded_data, "quality": embedded_quality},
-            ensure_ascii=False,
+            ensure_ascii=True,
             separators=(",", ":"),
         )
-        # Prevent embedded JSON from introducing script tags into the report.
-        for character, escaped in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026")):
-            embedded = embedded.replace(character, escaped)
+        # Prevent closing the inline script tag via a malicious DNS PTR name.
+        embedded = embedded.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
         latest = quality[-1]["completed_date"] if quality else today.isoformat()
         interval_label = (
             f"{REPORT_REFRESH_INTERVAL_SECONDS // 60} minutes"
@@ -1842,7 +1883,7 @@ class Analytics:
 
         if changed:
             self.log.info(
-                "ANALYTICS UPDATED | Changed=%s | Full=%s | DirtyDays=%s",
+                "ANALYTICS UPDATED | ChangedFiles=%s | Full=%s | DirtyDates=%s",
                 changed, full_refresh, len(dirty_dates),
             )
         self._reports_dirty = False
@@ -1852,9 +1893,9 @@ class Analytics:
 
 
 def destination(target, relative, action):
-    """Create a collision-free destination path for moves."""
+    """Build the destination path and generate unique names for move collisions."""
     dst = target / relative
-    ensure_destination_directory(dst.parent)
+    ensure_target_dir(dst.parent)
     if action == "copy":
         return dst
     if not dst.exists():
@@ -1870,7 +1911,7 @@ def destination(target, relative, action):
 
 
 def transfer(src, target, route_relative, action, reason, label, smb, analytics, log, initial_stat=None):
-    """Copy to a temporary target and publish only after source stability checks."""
+    """Transfer safely; avoid destination I/O until the source is stable."""
     tmp = None
     dst = None
     try:
@@ -1883,7 +1924,7 @@ def transfer(src, target, route_relative, action, reason, label, smb, analytics,
             smb_relative = src.name
         mtime = datetime.fromtimestamp(before.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
-        resolution = smb.resolve(src, smb_relative, mtime, utc_now_iso())
+        resolution = smb.resolve(src, smb_relative, mtime, utc_now())
         if resolution.get("is_open"):
             return False
         if time.time() - before.st_mtime < MIN_AGE:
@@ -1894,13 +1935,13 @@ def transfer(src, target, route_relative, action, reason, label, smb, analytics,
             return False
 
         dst = destination(target, route_relative, action)
-        if normalize_path_key(dst) == normalize_path_key(src):
+        if norm_path_key(dst) == norm_path_key(src):
             log.error("TRANSFER SKIPPED | Source and destination are identical")
             return False
         if action == "copy" and dst.exists():
             return False
 
-        page_count = get_page_count(src, analytics.log)
+        page_count = pages(src, analytics.log)
         tmp = dst.with_name(dst.name + "." + uuid.uuid4().hex + ".part")
         shutil.copy2(src, tmp)
         after = src.stat()
@@ -1908,7 +1949,7 @@ def transfer(src, target, route_relative, action, reason, label, smb, analytics,
             tmp.unlink(missing_ok=True)
             return False
         os.replace(tmp, dst)
-        committed = utc_now_iso()
+        committed = utc_now()
 
         if action == "move":
             try:
@@ -1920,7 +1961,7 @@ def transfer(src, target, route_relative, action, reason, label, smb, analytics,
                     try:
                         dst.unlink()
                     except OSError:
-                        log.error("CRITICAL | Cannot roll back destination after move failure")
+                        log.error("CRITICAL | Could not roll back destination after failed move")
                 return False
 
         analytics.add_scan(
@@ -1941,7 +1982,7 @@ def transfer(src, target, route_relative, action, reason, label, smb, analytics,
 
 
 def process_rules(groups, smb, analytics, log):
-    """Read each source once and process matching transfers serially."""
+    """Read each source once and transfer matching files sequentially."""
     started = time.perf_counter()
     tasks = []
     scanned = 0
@@ -1959,11 +2000,11 @@ def process_rules(groups, smb, analytics, log):
             group.error_until = 0.0
         except OSError as exc:
             group.error_until = now + 30.0
-            key = normalize_path_key(group.source)
+            key = norm_path_key(group.source)
             if key not in source_errors:
                 source_errors.add(key)
                 log.error(
-                    "RULE ERROR | Source unreadable | Retry=30s | ErrorType=%s",
+                    "RULE ERROR | Cannot read source directory | Retry=30s | ErrorType=%s",
                     type(exc).__name__,
                 )
             continue
@@ -1997,7 +2038,7 @@ def process_rules(groups, smb, analytics, log):
     for candidate, rule, relative in tasks:
         if STOP.is_set():
             break
-        # Rule identifiers are used in memory but not persisted in analytics.
+        # Routing identifiers are not persisted in analytics.
         label = ""
         if transfer(
             candidate.path,
@@ -2023,6 +2064,9 @@ def process_rules(groups, smb, analytics, log):
     }
 
 
+
+
+
 def single_instance(log):
     if os.name != "nt":
         return True
@@ -2043,7 +2087,7 @@ def single_instance(log):
     handle = kernel32.CreateMutexW(
         None,
         False,
-        "Global\\Trachti-ScanProxy",
+        "Global\\TrachtiScanProxy",
     )
     already_running = (
         ctypes.get_last_error() == 183
@@ -2052,7 +2096,7 @@ def single_instance(log):
         if handle:
             kernel32.CloseHandle(handle)
         log.error(
-            "ABORT | Scan Proxy is already running"
+            "START ABORTED | Another scan-proxy instance is running"
         )
         return False
     return handle
@@ -2091,16 +2135,16 @@ def main():
 
     log.info(
         "START | Version=%s | FileScan=%ss | PendingSweep=%ss | "
-        "ReportRefresh=%ss | SMB-Snapshot=%ss | SMB-Lookback=%smin",
+        "ReportRefresh=%ss | SMBSnapshot=%ss | SMBPending=%smin | 5140Fallback=%ss",
         VERSION, FILE_SCAN_INTERVAL_SECONDS, PENDING_SWEEP_INTERVAL_SECONDS,
         REPORT_REFRESH_INTERVAL_SECONDS, SMB_SNAPSHOT_TTL_SECONDS,
-        SMB_EVENT_LOOKBACK_MINUTES,
+        SMB_EVENT_LOOKBACK_MINUTES, SMB_SHARE_FALLBACK_MAX_AGE_SECONDS,
     )
     analytics_log.info(
         "START | Version=%s | PendingSweep=%ss | ReportRefresh=%ss",
         VERSION, PENDING_SWEEP_INTERVAL_SECONDS, REPORT_REFRESH_INTERVAL_SECONDS,
     )
-    print(f"Scan Proxy {VERSION} is running. Press Ctrl+C to stop.", flush=True)
+    print(f"Scanproxy {VERSION} running. Press Ctrl+C to stop.", flush=True)
 
     try:
         while not STOP.is_set():
@@ -2115,7 +2159,7 @@ def main():
                         groups, active_count = compile_rules(raw_rules, log)
                         last_config_mtime = config_mtime
                         log.info(
-                            "WORKBOOK LOADED | Sheet=%s | Rules=%s | Active=%s | Sources=%s",
+                            "WORKBOOK LOADED | Sheet=%s | Rules=%s | Enabled=%s | Sources=%s",
                             sheet, len(raw_rules), active_count, len(groups),
                         )
 
@@ -2147,7 +2191,7 @@ def main():
                 if now >= next_perf:
                     cycles = max(1, perf["cycles"])
                     log.info(
-                        "PERFORMANCE | ScanAvg=%.1fms | SMB-Snapshot=%.1fms | "
+                        "PERFORMANCE | ScanAvg=%.1fms | SMBSnapshot=%.1fms | "
                         "Sources=%s | Files=%s | Matches=%s | Transfers=%s | "
                         "Pending=%.1fms | Reports=%.1fms",
                         perf["scan_ms"] / cycles,
@@ -2159,21 +2203,21 @@ def main():
                             "matched": 0, "transfers": 0, "pending_ms": 0.0, "report_ms": 0.0}
                     next_perf = time.monotonic() + PERFORMANCE_LOG_INTERVAL_SECONDS
 
-            except Exception as exc:
-                log.error("SCAN CYCLE ERROR | ErrorType=%s", type(exc).__name__)
+            except Exception:
+                log.error("PROCESSING LOOP FAILED | ErrorType=%s", sys.exc_info()[0].__name__)
             STOP.wait(MAIN_LOOP_SLEEP_SECONDS)
 
     finally:
         try:
             analytics.resolve_pending(smb)
             analytics.refresh_reports(force=True)
-        except Exception as exc:
-            analytics_log.error("ANALYTICS ERROR | Shutdown | ErrorType=%s", type(exc).__name__)
+        except Exception:
+            analytics_log.error("ANALYTICS ERROR | Shutdown | ErrorType=%s", sys.exc_info()[0].__name__)
         analytics.close()
         if os.name == "nt" and mutex not in (True, False):
             ctypes.WinDLL("kernel32").CloseHandle(ctypes.c_void_p(mutex))
-        analytics_log.info("STOP")
-        log.info("STOP")
+        analytics_log.info("STOPPED")
+        log.info("STOPPED")
         print("Scan Proxy stopped.", flush=True)
 
 if __name__ == "__main__":

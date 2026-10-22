@@ -1,44 +1,70 @@
-# Deployment
+# Windows deployment and upgrade
 
-## From source
+This guide supplements [README.md](../README.md). Test basic file routing on synthetic files first, then enable optional SMB attribution.
 
-1. Clone or extract Scan Proxy onto the Windows host.
-2. Run `scripts\install.ps1` to create the virtual environment.
-3. Copy `config\scan-proxy-config.example.xlsx` to `config\scan-proxy-config.xlsx`.
-4. Copy `config\environment.example.ps1` to `config\environment.local.ps1` and adjust local values.
-5. Configure the Excel rules using neutral paths that exist on the host.
-6. Optionally enable Windows Detailed File Share auditing through `scripts\setup-smb-auditing.ps1` in an elevated shell.
-7. Start the service using `scripts\run.ps1 -UsePython`.
+## Source-mode installation
 
-## Bundled executable
+1. Copy the source tree to an access-controlled path such as `C:\ScanProxy`.
+2. Run `scripts\install.ps1` from a Windows PowerShell prompt.
+3. Copy the public configuration examples to private `environment.local.ps1` and `scan-proxy-config.xlsx`.
+4. Configure a safe root directory and verify actual permissions. Excel rules are disabled by default.
+5. Enable one rule and run `scripts\run.ps1 -UsePython`.
+6. Test both matching and non-matching synthetic files; check logs and destination contents.
+7. Only then decide whether SMB IP attribution is needed. If approved, configure `SCAN_PROXY_SMB_USER` and enable 5145/5140 success auditing from an administrator shell.
 
-Run `scripts\build.ps1`. The deployable folder is `dist\scan-proxy\` and includes:
-
-```text
-scan-proxy.exe
-scripts/scan-proxy-smb.ps1
-config/scan-proxy-config.example.xlsx
-config/environment.example.ps1
-```
-
-Add local configuration next to the executable and launch it from a process that has the required `SCAN_PROXY_*` environment variables. `scripts\run.ps1` loads `config\environment.local.ps1` when started from the repository; launching `scan-proxy.exe` directly does **not** automatically execute a PowerShell environment file.
-
-## Operations
-
-- Routing logs: `logs\scan-proxy\`
-- Analytics logs: `logs\analytics\`
-- Local SQLite database: `analytics\_state\scan-proxy.db`
-- HTML report: `analytics\analytics.html`
-- CSV reports: `analytics\daily\`, `weekly\`, `monthly\`, `yearly\`
-
-Never commit the runtime directories or production configuration. Back up an existing `analytics/` directory before upgrading; old databases or reports may contain historical account, path, scanner IP, or hostname information and may not have a compatible schema. Start with a fresh `analytics/` directory if a clean deployment is required. Run on a Windows host with enough permissions to read sources, create destinations, and remove source files when using `move`. Historical SMB resolution additionally requires Windows Security log access and appropriate auditing policy.
-
-## Tests
-
-From the project root:
+## Building and running a `.exe`
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+Set-Location C:\ScanProxy
+.\scripts\build.ps1
+Set-Location .\dist\scan-proxy
+Copy-Item .\config\environment.example.ps1 .\config\environment.local.ps1
+Copy-Item .\config\scan-proxy-config.example.xlsx .\config\scan-proxy-config.xlsx
+notepad .\config\environment.local.ps1
+.\scripts\run.ps1
 ```
 
-Test on Windows with a real SMB share and event 5145 auditing before using the service on production scan folders. The continuous-integration tests do not exercise live Windows SMB cmdlets.
+The executable distribution must retain these relative files: `scan-proxy.exe`, `scripts/run.ps1`, `scripts/scan-proxy-smb.ps1`, `scripts/setup-smb-auditing.ps1`, `config/environment.local.ps1` and `config/scan-proxy-config.xlsx`. **Never distribute configured local files publicly.**
+
+## Task Scheduler
+
+Use a dedicated task account and **Create Task…** in Windows Task Scheduler. On **General**, select the correct account and make sure it has adequate folder permissions. On **Triggers**, choose **New… → At startup**. On **Actions**, choose **New…**:
+
+```text
+Program/script:    powershell.exe
+Add arguments:     -NoProfile -ExecutionPolicy RemoteSigned -File "C:\ScanProxy\scripts\run.ps1" -UsePython
+Start in:          C:\ScanProxy
+```
+
+For a compiled distribution change `-File` to the `dist\scan-proxy\scripts\run.ps1` path and omit `-UsePython`. Test with **Run**, then confirm the Task History, `logs/scan-proxy/` and output files. The application uses a Windows mutex to reject simultaneous instances. Avoid setting the task to start a second concurrent run.
+
+Choose a script execution policy appropriate to the host. Some enterprises block local PowerShell scripts or enforce signed script requirements; do not bypass organization policy.
+
+## Updating to 2.13.1
+
+1. Stop the scheduled task or interactive process. Check the process has exited.
+2. Back up private Excel rules, local environment settings, `analytics/_state/`, logs and current state under restricted storage.
+3. Replace the public code and documentation files in the matching repository paths. Do not overwrite local config or existing `LICENSE`.
+4. Run the tests and inspect the local SMB configuration. The new version expects English workbook columns and action/mode values; migrate old localized rules.
+5. Verify the generic example files have not gained private usernames/hostnames/CIDRs. Keep deployment-specific values local.
+6. Test a known `copy` rule first; then verify `move` and pending recovery. Check analytics and SMB attribution with synthetic events or a permitted controlled scanner test.
+7. Restart the task after validation.
+
+**Existing state warning:** Previous SQLite data may contain source/destination paths or scanner hostnames. Deploying new code does not scrub old SQLite rows or historical Git commits. If replacing the database is intentional, archive it privately and delete the generated `analytics/` directory **only while stopped**, understanding that pending move recovery and prior reports will be lost.
+
+## SMB diagnosis and event setup
+
+From elevated PowerShell, if authorized:
+
+```powershell
+.\scripts\setup-smb-auditing.ps1
+```
+
+For status (requires a locally configured SMB account):
+
+```powershell
+. .\config\environment.local.ps1
+.\scripts\scan-proxy-smb.ps1 -Mode Status -UserName $env:SCAN_PROXY_SMB_USER
+```
+
+Verify the host is the SMB file server. `Get-SmbOpenFile`/`Get-SmbSession` return relevant records only there. Event 5145 provides file-relative details; Event 5140 provides share-level details and is intentionally a weaker, narrow-window fallback.

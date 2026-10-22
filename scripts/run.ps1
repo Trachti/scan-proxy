@@ -1,25 +1,31 @@
+# Load private local settings, then run Python or a compiled executable.
 [CmdletBinding()]
 param([switch]$UsePython)
 
 $ErrorActionPreference = 'Stop'
-$RepositoryRoot = Split-Path -Parent $PSScriptRoot
-$LocalEnvironment = Join-Path $RepositoryRoot 'config\environment.local.ps1'
-if (Test-Path $LocalEnvironment) {
-    . $LocalEnvironment
+$ApplicationRoot = Split-Path -Parent $PSScriptRoot
+$LocalEnvironment = Join-Path $ApplicationRoot 'config\environment.local.ps1'
+if (-not (Test-Path $LocalEnvironment)) {
+    throw "Missing local settings: $LocalEnvironment. Copy config\environment.example.ps1 first."
 }
-if (-not $env:SCAN_PROXY_CONFIG) {
-    $env:SCAN_PROXY_CONFIG = Join-Path $RepositoryRoot 'config\scan-proxy-config.xlsx'
-}
+. $LocalEnvironment
 
-$Executable = Join-Path $RepositoryRoot 'dist\scan-proxy\scan-proxy.exe'
-if (-not $UsePython -and (Test-Path $Executable)) {
-    & $Executable
+if ($UsePython) {
+    $Python = Join-Path $ApplicationRoot '.venv\Scripts\python.exe'
+    $Script = Join-Path $ApplicationRoot 'src\scan_proxy.py'
+    if (-not (Test-Path $Python)) { throw "Python virtual environment not found: $Python" }
+    if (-not (Test-Path $Script)) { throw "Python entry point not found: $Script" }
+    & $Python $Script
     exit $LASTEXITCODE
 }
 
-$Python = Join-Path $RepositoryRoot '.venv\Scripts\python.exe'
-if (-not (Test-Path $Python)) {
-    throw "Python virtual environment not found: $Python. Run .\scripts\install.ps1 first."
+# Support both a repo-root launcher and the self-contained distribution launcher.
+$Executable = Join-Path $ApplicationRoot 'scan-proxy.exe'
+if (-not (Test-Path $Executable)) {
+    $Executable = Join-Path $ApplicationRoot 'dist\scan-proxy\scan-proxy.exe'
 }
-& $Python (Join-Path $RepositoryRoot 'src\scan_proxy.py')
+if (-not (Test-Path $Executable)) {
+    throw "Executable not found: $Executable. Run .\scripts\build.ps1 or pass -UsePython."
+}
+& $Executable
 exit $LASTEXITCODE
